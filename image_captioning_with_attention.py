@@ -13,6 +13,7 @@ import time
 import json
 from PIL import Image
 from tqdm import tqdm
+from datetime import datetime
 
 import tensorflow as tf
 
@@ -25,9 +26,14 @@ from sklearn.utils import shuffle
 # ***************************************************************************************
 def get_mscoco_data(n_train=30000):
     """
-    Get MS COCO Data
+    Get MS COCO Data.
+    MS-COCO:  This dataset contains >82,000 images, each of which has been annotated
+    with at least 5 different captions.
 
-    :return: 2 lists: [0] list of captions, [1] list of image corresponding to the caption
+    If there are multiple captions per image. The image should be repeated in the
+    list with the different caption as a separate entry.
+
+    :return: 2 lists: [0] list of captions, [1] location of image file for the captions.
     """
     print("Getting MS COCO DataSet ...")
 
@@ -54,10 +60,8 @@ def get_mscoco_data(n_train=30000):
     else:
         img_path = data_dir + '/train2014/'
 
-    # Pre-processing
-    # --------------
-    print("Format data for ease of use...")
-
+    # Generate lists of images and captions
+    # -------------------------------------
     # Read the annotations file
     with open(annotation_file, 'r') as f:
         annotations = json.load(f)
@@ -301,9 +305,7 @@ if __name__ == '__main__':
     tf.enable_eager_execution()
 
     # -----------------------------------------------------------------------------------
-    # Download data &  Make available for efficient use
-    # MS-COCO:  This dataset contains >82,000 images, each of which has been annotated
-    # with at least 5 different captions.
+    # Get Data
     # -----------------------------------------------------------------------------------
     print("Getting Data ...")
     train_captions, img_name_vector = get_mscoco_data()
@@ -321,22 +323,20 @@ if __name__ == '__main__':
 
     image_features_extract_model = tf.keras.Model(new_input, hidden_layer)
 
+    # Store Features of Images and use these for training
     # --------------------------------------------
-    # Image Preprocessing
-    # --------------------------------------------
-    # Instead of processing the images, extract features from each image and 'cache' them, for computational speed
-    print("Caching Features of the Images ...")
+    print("Extracting Features from dataset images ...")
 
-    # Getting the unique images
+    # Get unique images, there are multiple captions per image. We only need to store
+    # features of unique images
     IMAGE_CACHING_BATCH_SIZE = 16
 
-    # TODO(Salman): Why is is necessary ?
     encode_train = sorted(set(img_name_vector))
-
-    # feel free to change the batch_size according to your system configuration
     image_dataset = tf.data.Dataset.from_tensor_slices(encode_train).map(load_image).batch(IMAGE_CACHING_BATCH_SIZE)
 
+    start_feature_extract = datetime.now()
     for img, path in tqdm(image_dataset):
+
         batch_features = image_features_extract_model(img)
         batch_features = tf.reshape(batch_features, (batch_features.shape[0], -1, batch_features.shape[3]))
 
@@ -344,14 +344,16 @@ if __name__ == '__main__':
             path_of_feature = p.numpy().decode("utf-8")
             np.save(path_of_feature, bf.numpy())
 
-    # --------------------------------------------
+    print("Image Feature Extracting Step took {}".format(datetime.now() - start_feature_extract))
+
+    # -----------------------------------------------------------------------------------
     # Caption Preprocessing
-    # --------------------------------------------
+    # -----------------------------------------------------------------------------------
     # 1. Tokenize the captions (e.g., by splitting on spaces) to generate Vocabulary
     # 2. Limit Vocabulary to save memory, all other words replaced with token "UNK"
     # 3. Create word -> index mapping (to easily translate between them)
     # 4. Pad all captions to same (longest) length
-    print("Preprocessing Captions")
+    print("Tokenizing Captions...")
 
     VOCAB_LENGTH = 5000
 
@@ -361,12 +363,17 @@ if __name__ == '__main__':
         filters='!"#$%&()*+.,-/:;=?@[\]^_`{|}~ ')
 
     tokenizer.fit_on_texts(train_captions)
+
+    # Represent each word by its token index
+    # Eg. '<start> A skateboarder performing a trick on a skateboard ramp. <end>' ==>
+    # [3, 2, 351, 687, 2, 280, 5, 2, 84, 339, 4]
     train_seqs = tokenizer.texts_to_sequences(train_captions)
 
     # Mapping word -> index
-    tokenizer.word_index = {key: value for key, value in tokenizer.word_index.items() if value <= VOCAB_LENGTH}
+    tokenizer.word_index = \
+        {key: value for key, value in tokenizer.word_index.items() if value <= VOCAB_LENGTH}
 
-    # putting <unk> token in the word2idx dictionary
+    # Putting <unk> token in the word2idx dictionary
     tokenizer.word_index[tokenizer.oov_token] = VOCAB_LENGTH + 1
     tokenizer.word_index['<pad>'] = 0
 
@@ -377,7 +384,10 @@ if __name__ == '__main__':
     index_word = {value: key for key, value in tokenizer.word_index.items()}
 
     # padding each vector to the max_length of the captions
-    # if the max_length parameter is not provided, pad_sequences calculates that automatically
+    # array([  3,  29,  53,  19,  89, 202, 100,  92,   5,   7, 218,   4,   0,
+    #          0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    #          0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    #          0,   0,   0,   0,   0,   0,   0,   0,   0,   0], dtype=int32)
     cap_vector = tf.keras.preprocessing.sequence.pad_sequences(train_seqs, padding='post')
 
     # calculating the max_length
@@ -387,7 +397,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Train Validation Split
     # -----------------------------------------------------------------------------------
-    print("Creating Training and Validation Split")
+    print("Creating Training and Validation Split ... ")
 
     TRAIN_VALIDATION_SPLIT = 0.2
 
@@ -400,7 +410,6 @@ if __name__ == '__main__':
     print("Training ({} images, {} captions). Validation ({} images, {} captions)".format(
         len(img_name_train), len(cap_train), len(img_name_val), len(cap_val)))
 
-    """## Our images and captions are ready! Next, let's create a tf.data dataset to use for training our model."""
     # -----------------------------------------------------------------------------------
     # Create a Tensorflow DataSet
     # -----------------------------------------------------------------------------------
@@ -432,7 +441,7 @@ if __name__ == '__main__':
     dataset = dataset.prefetch(1)
 
     # -----------------------------------------------------------------------------------
-    # DECODER:
+    # CAPTIONING MODEL
     #
     # In this example, we extract the features from the lower convolutional layer of
     # InceptionV3 giving us a vector of shape (8, 8, 2048). We squash that to a shape
@@ -440,7 +449,7 @@ if __name__ == '__main__':
     # single Fully connected layer). The RNN(here GRU) attends over the image to predict
     # the next word.
     # -----------------------------------------------------------------------------------
-    print("Building Decoder ...")
+    print("Building Captioning Model ...")
 
     encoder = CnnEncoder(embedding_dim)
     decoder = RnnDecoder(embedding_dim, units, vocab_size)
