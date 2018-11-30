@@ -7,20 +7,86 @@
 # eager/python/examples/generative_examples/image_captioning_with_attention.ipynb
 # ---------------------------------------------------------------------------------------
 import matplotlib.pyplot as plt
-import re
 import numpy as np
 import os
 import time
 import json
-from glob import glob
 from PIL import Image
-import pickle
 from tqdm import tqdm
 
 import tensorflow as tf
 
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
+
+
+# ***************************************************************************************
+#  Get the Data
+# ***************************************************************************************
+def get_mscoco_data(n_train=30000):
+    """
+    Get MS COCO Data
+
+    :return: 2 lists: [0] list of captions, [1] list of image corresponding to the caption
+    """
+    print("Getting MS COCO DataSet ...")
+
+    data_dir = os.path.join(os.path.abspath('.'), 'data/mscoco')
+
+    print("Getting Captions Files...")
+    annotation_zip = tf.keras.utils.get_file(
+        'captions.zip',
+        cache_subdir=data_dir,
+        origin='http://images.cocodataset.org/annotations/annotations_trainval2014.zip',
+        extract=True)
+    annotation_file = os.path.dirname(annotation_zip) + '/annotations/captions_train2014.json'
+
+    print("Getting Training Files...")
+    name_of_zip = 'train2014.zip'
+    if not os.path.exists(data_dir + '/' + name_of_zip):
+        image_zip = tf.keras.utils.get_file(
+            name_of_zip,
+            cache_subdir=data_dir,
+            origin='http://images.cocodataset.org/zips/train2014.zip',
+            extract=True)
+
+        img_path = os.path.dirname(image_zip) + '/train2014/'
+    else:
+        img_path = data_dir + '/train2014/'
+
+    # Pre-processing
+    # --------------
+    print("Format data for ease of use...")
+
+    # Read the annotations file
+    with open(annotation_file, 'r') as f:
+        annotations = json.load(f)
+
+    # storing the captions and the image name in vectors
+    all_captions = []
+    all_img_name_vector = []
+
+    for annotation in annotations['annotations']:
+        caption = '<start> ' + annotation['caption'] + ' <end>'
+        image_id = annotation['image_id']
+        full_coco_image_path = img_path + 'COCO_train2014_' + '%012d.jpg' % image_id
+
+        all_img_name_vector.append(full_coco_image_path)
+        all_captions.append(caption)
+
+    # shuffling the captions and image_names together
+    # setting a random state
+    t_captions, img_name_arr = shuffle(all_captions, all_img_name_vector, random_state=1)
+
+    # Limit the training set for faster Training
+
+    t_captions = t_captions[:n_train]
+    img_name_arr = img_name_arr[:n_train]
+
+    print("Training with {} captions. Total Number of captions in dataset {}".format(
+        len(t_captions), len(all_captions)))
+
+    return t_captions, img_name_arr
 
 
 def load_image(img_path):
@@ -235,70 +301,18 @@ if __name__ == '__main__':
     tf.enable_eager_execution()
 
     # -----------------------------------------------------------------------------------
-    # Download data & preprocess
+    # Download data &  Make available for efficient use
     # MS-COCO:  This dataset contains >82,000 images, each of which has been annotated
     # with at least 5 different captions.
     # -----------------------------------------------------------------------------------
-    print("Download Data Set and pre-processing ...")
-
-    # Download if necessary
-    # ---------------------
-    annotation_zip = tf.keras.utils.get_file(
-        'captions.zip',
-        cache_subdir=os.path.abspath('.'),
-        origin='http://images.cocodataset.org/annotations/annotations_trainval2014.zip',
-        extract=True)
-    annotation_file = os.path.dirname(annotation_zip) + '/annotations/captions_train2014.json'
-
-    name_of_zip = 'train2014.zip'
-    if not os.path.exists(os.path.abspath('.') + '/' + name_of_zip):
-        image_zip = tf.keras.utils.get_file(
-            name_of_zip,
-            cache_subdir=os.path.abspath('.'),
-            origin='http://images.cocodataset.org/zips/train2014.zip',
-            extract=True)
-
-        PATH = os.path.dirname(image_zip)+'/train2014/'
-    else:
-        PATH = os.path.abspath('.')+'/train2014/'
-
-    # Pre-processing
-    # --------------
-    print("Preprocessing Data")
-
-    # Read the annotations File
-    with open(annotation_file, 'r') as f:
-        annotations = json.load(f)
-
-    # storing the captions and the image name in vectors
-    all_captions = []
-    all_img_name_vector = []
-
-    for annotation in annotations['annotations']:
-        caption = '<start> ' + annotation['caption'] + ' <end>'
-        image_id = annotation['image_id']
-        full_coco_image_path = PATH + 'COCO_train2014_' + '%012d.jpg' % image_id
-
-        all_img_name_vector.append(full_coco_image_path)
-        all_captions.append(caption)
-
-    # shuffling the captions and image_names together
-    # setting a random state
-    train_captions, img_name_vector = shuffle(all_captions, all_img_name_vector, random_state=1)
-
-    # Limit the training set for faster Training
-    num_examples = 30000
-    train_captions = train_captions[:num_examples]
-    img_name_vector = img_name_vector[:num_examples]
-
-    print("Training with {} captions. Total Number of captions in dataset {}".format(
-        len(train_captions), len(all_captions)))
+    print("Getting Data ...")
+    train_captions, img_name_vector = get_mscoco_data()
 
     # -----------------------------------------------------------------------------------
     # Image Encoder
     # InceptionV3 model (pretrained on Imagenet). Feature Shape [2048, 64]
     # -----------------------------------------------------------------------------------
-    print("Building Model and loading pretrained weights ...")
+    print("Making image feature extracting network ...")
 
     # Don't include the top, we only need the features from the last layer, not the classifier
     image_model = tf.keras.applications.InceptionV3(include_top=False, weights='imagenet')
