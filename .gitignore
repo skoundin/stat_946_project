@@ -1,0 +1,13 @@
+# Compiled python files
+#----------------------
+*.py[cod]
+
+PyCharm MetaData
+#---------------------
+.idea
+
+# Ignore the data directory
+
+
+# Ignore the results directory
+
