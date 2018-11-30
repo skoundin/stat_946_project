@@ -2,12 +2,13 @@
 #----------------------
 *.py[cod]
 
+
 PyCharm MetaData
 #---------------------
 .idea
 
 # Ignore the data directory
-
+data
 
 # Ignore the results directory
 
