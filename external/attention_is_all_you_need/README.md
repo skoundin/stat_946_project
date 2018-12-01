@@ -1,6 +1,11 @@
 # The Transformer model in Attention is all you need：a Keras implementation.
 A Keras+TensorFlow Implementation of the Transformer: "[Attention is All You Need](https://arxiv.org/abs/1706.03762)" (Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin, arxiv, 2017)
 
+This is code from the repository https://github.com/Lsdefine/attention-is-all-you-need-keras
+
+It has been slightly modified to run on tf.keras as opposed to keras directly.
+This was needed to extract the decoder to run with the captioning model.
+
 # Usage
 Please refer to *en2de_main.py* and *pinyin_main.py*
 ### en2de_main.py
