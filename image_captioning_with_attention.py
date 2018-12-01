@@ -209,29 +209,36 @@ class RnnDecoder(tf.keras.Model):
 
         self.attention = BahdanauAttention(self.units)
 
-    def call(self, x, features, hidden):
+    def call(self, dec_in, features, prev_hidden):
+        """
+        
+        :param dec_in: Full word (not embedded). Either Start or previous output of decoder 
+        :param features: Encoded Image Features
+        :param prev_hidden: previous hidden state of the Decoder
+        :return: 
+        """
         # defining attention as a separate model
-        context_vector, attention_weights = self.attention(features, hidden)
+        context_vector, attention_weights = self.attention(features, prev_hidden)
 
         # x shape after passing through embedding == (batch_size, 1, embedding_dim)
-        x = self.embedding(x)
+        dec_in = self.embedding(dec_in)
 
         # x shape after concatenation == (batch_size, 1, embedding_dim + hidden_size)
-        x = tf.concat([tf.expand_dims(context_vector, 1), x], axis=-1)
+        dec_in = tf.concat([tf.expand_dims(context_vector, 1), dec_in], axis=-1)
 
         # passing the concatenated vector to the GRU
-        output, state = self.gru(x)
+        output, state = self.gru(dec_in)
 
         # shape == (batch_size, max_length, hidden_size)
-        x = self.fc1(output)
+        dec_in = self.fc1(output)
 
         # x shape == (batch_size * max_length, hidden_size)
-        x = tf.reshape(x, (-1, x.shape[2]))
+        dec_in = tf.reshape(dec_in, (-1, dec_in.shape[2]))
 
         # output shape == (batch_size * max_length, vocab)
-        x = self.fc2(x)
+        dec_in = self.fc2(dec_in)
 
-        return x, state, attention_weights
+        return dec_in, state, attention_weights
 
     def reset_state(self, batch_size):
         return tf.zeros((batch_size, self.units))
@@ -413,7 +420,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Create a Tensorflow DataSet
     # -----------------------------------------------------------------------------------
-    print("Creating a tensorflow Dataset ...")
+    print("Creating a Tensorflow Dataset ...")
 
     BATCH_SIZE = 64
     BUFFER_SIZE = 1000
@@ -476,31 +483,31 @@ if __name__ == '__main__':
     EPOCHS = 20
 
     for epoch in range(EPOCHS):
-        start = time.time()
+        start = datetime.now()
         total_loss = 0
 
-        for (batch, (img_tensor, target)) in enumerate(dataset):
+        for (batch, (img_tensor, true_caption)) in enumerate(dataset):
             loss = 0
 
             # initializing the hidden state for each batch
             # because the captions are not related from image to image
-            hidden = decoder.reset_state(batch_size=target.shape[0])
+            hidden = decoder.reset_state(batch_size=true_caption.shape[0])
 
             dec_input = tf.expand_dims([tokenizer.word_index['<start>']] * BATCH_SIZE, 1)
 
             with tf.GradientTape() as tape:
                 features = encoder(img_tensor)
 
-                for i in range(1, target.shape[1]):
+                for i in range(1, true_caption.shape[1]):
                     # passing the features through the decoder
                     predictions, hidden, _ = decoder(dec_input, features, hidden)
 
-                    loss += loss_function(target[:, i], predictions)
+                    loss += loss_function(true_caption[:, i], predictions)
 
                     # using teacher forcing
-                    dec_input = tf.expand_dims(target[:, i], 1)
+                    dec_input = tf.expand_dims(true_caption[:, i], 1)
 
-            total_loss += (loss / int(target.shape[1]))
+            total_loss += (loss / int(true_caption.shape[1]))
 
             variables = encoder.variables + decoder.variables
 
@@ -512,7 +519,7 @@ if __name__ == '__main__':
                 print('Epoch {} Batch {} Loss {:.4f}'.format(
                     epoch + 1,
                     batch,
-                    loss.numpy() / int(target.shape[1])))
+                    loss.numpy() / int(true_caption.shape[1])))
 
         # storing the epoch end loss value to plot later
         loss_plot.append(total_loss / len(cap_vector))
@@ -521,7 +528,7 @@ if __name__ == '__main__':
             epoch + 1,
             total_loss / len(cap_vector)))
 
-        print('Time taken for 1 epoch {} sec\n'.format(time.time() - start))
+        print('Time taken for 1 epoch {} sec\n'.format(datetime.now() - start))
 
     # PLot loss function
     plt.plot(loss_plot)
