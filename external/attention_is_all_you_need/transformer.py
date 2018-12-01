@@ -147,14 +147,14 @@ class DecoderLayer():
 		output = self.pos_ffn_layer(output)
 		return output, slf_attn, enc_attn
 
-def GetPosEncodingMatrix(max_len, d_emb):
+
+def get_pos_encoding_matrix(max_len, d_emb):
 	pos_enc = np.array([
 		[pos / np.power(10000, 2 * (j // 2) / d_emb) for j in range(d_emb)] 
-		if pos != 0 else np.zeros(d_emb) 
-			for pos in range(max_len)
-			])
-	pos_enc[1:, 0::2] = np.sin(pos_enc[1:, 0::2]) # dim 2i
-	pos_enc[1:, 1::2] = np.cos(pos_enc[1:, 1::2]) # dim 2i+1
+		if pos != 0 else np.zeros(d_emb) for pos in range(max_len)])
+
+	pos_enc[1:, 0::2] = np.sin(pos_enc[1:, 0::2])  # dim 2i
+	pos_enc[1:, 1::2] = np.cos(pos_enc[1:, 1::2])  # dim 2i+1
 	return pos_enc
 
 def GetPadMask(q, k):
@@ -227,7 +227,7 @@ class Transformer:
 		d_emb = d_model
 
 		pos_emb = Embedding(len_limit, d_emb, trainable=False, \
-						   weights=[GetPosEncodingMatrix(len_limit, d_emb)])
+							weights=[get_pos_encoding_matrix(len_limit, d_emb)])
 
 		i_word_emb = Embedding(i_tokens.num(), d_emb)
 		if share_word_emb: 
@@ -413,7 +413,7 @@ class LRSchedulerPerEpoch(Callback):
 class AddPosEncoding:
 	def __call__(self, x):
 		_, max_len, d_emb = K.int_shape(x)
-		pos = GetPosEncodingMatrix(max_len, d_emb)
+		pos = get_pos_encoding_matrix(max_len, d_emb)
 		x = Lambda(lambda x:x+pos)(x)
 		return x
 	

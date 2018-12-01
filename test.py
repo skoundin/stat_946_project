@@ -1,30 +1,52 @@
 # ---------------------------------------------------------------------------------------
 # Image Captioning using the Transformer network
 # ---------------------------------------------------------------------------------------
-from keras.layers import Embedding, TimeDistributed, Dense, Input, Lambda
+from tensorflow.keras.layers import Embedding, TimeDistributed, Dense, Input, Lambda
 import keras.backend as K
 
-from external.attention_is_all_you_need.transformer import Transformer
+from external.attention_is_all_you_need.transformer import Transformer, get_pos_encoding_matrix, Decoder
 import external.attention_is_all_you_need.dataloader as dd
 import external.attention_is_all_you_need.transformer as transformer
 
 
 if __name__ == '__main__':
 
-    # Positional Embedding
-    pos_emb = Embedding(
-        input_dim=70,
-        output_dim=512,
+    max_caption_length = 70
+    dim_embedding = 256
+    vocab_size = 5001
+
+    dim_model = 512
+    dim_hidden = 512
+    num_attention_heads = 8
+    dim_key = 64
+    dim_value = 64
+    num_decoder_layers = 2
+    prob_dropout = 0.1
+
+    # Position encoding layer, this is used to preserve the order of words in caption sequences.
+    pos_embed_layer = Embedding(
+        max_caption_length,
+        dim_embedding,
         trainable=False,
-        weights=[transformer.GetPosEncodingMatrix(70, 512)])
-
-
-    def get_pos_seq(x):
-        mask = K.cast(K.not_equal(x, 0), 'int32')
-        pos = K.cumsum(K.ones_like(x, 'int32'), 1)
-        return pos * mask
-
+        weights=[get_pos_encoding_matrix(max_caption_length, dim_embedding)]
+    )
 
     # Word Embedding
-    i_tokens, o_tokens = dd.MakeS2SDict('data/en2de.s2s.txt', dict_file='data/en2de_word.txt')
-    o_word_emb = Embedding(o_tokens.num(), 512)
+    word_embed_layer = Embedding(vocab_size, dim_embedding)
+
+    # The Full Decoder
+    decoder = Decoder(
+        d_model=dim_model,
+        d_inner_hid=dim_hidden,
+        n_head=num_attention_heads,
+        d_k=dim_key,
+        d_v=dim_value,
+        layers=num_decoder_layers,
+        dropout=prob_dropout,
+        word_emb=word_embed_layer,
+        pos_emb=pos_embed_layer)
+
+
+
+
+

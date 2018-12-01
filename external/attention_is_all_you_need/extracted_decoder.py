@@ -17,7 +17,7 @@ if __name__ == '__main__':
         input_dim=70,
         output_dim=512,
         trainable=False,
-        weights=[transformer.GetPosEncodingMatrix(70, 512)])
+        weights=[transformer.get_pos_encoding_matrix(70, 512)])
 
     def get_pos_seq(self, x):
         mask = K.cast(K.not_equal(x, 0), 'int32')
