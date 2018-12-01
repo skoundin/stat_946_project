@@ -9,6 +9,8 @@ PyCharm MetaData
 
 # Ignore the data directory
 data
+/external/attention_is_all_you_need/models
+
 
 # Ignore the results directory
 
