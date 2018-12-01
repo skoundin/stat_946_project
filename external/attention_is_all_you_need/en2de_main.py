@@ -1,7 +1,7 @@
 import os, sys
 import dataloader as dd
-from keras.optimizers import *
-from keras.callbacks import *
+from tensorflow.keras.optimizers import *
+from tensorflow.keras.callbacks import *
 
 itokens, otokens = dd.MakeS2SDict('data/en2de.s2s.txt', dict_file='data/en2de_word.txt')
 Xtrain, Ytrain = dd.MakeS2SData('data/en2de.s2s.txt', itokens, otokens, h5_file='data/en2de.h5')

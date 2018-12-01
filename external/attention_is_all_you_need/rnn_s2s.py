@@ -1,7 +1,8 @@
-from keras.models import *
-from keras.layers import *
-from keras.callbacks import *
+from tensorflow.keras.models import *
+from tensorflow.keras.layers import *
+from tensorflow.keras.callbacks import *
 import tensorflow as tf
+import tensorflow.keras.backend as K
 
 from dataloader import TokenList, pad_to_longest
 	

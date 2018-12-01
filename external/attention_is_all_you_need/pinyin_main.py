@@ -1,7 +1,7 @@
 import os, sys
 import dataloader as dd
-from keras.optimizers import *
-from keras.callbacks import *
+from tensorflow.keras.optimizers import *
+from tensorflow.keras.callbacks import *
 
 itokens, otokens = dd.MakeS2SDict('data/pinyin.corpus.txt', dict_file='data/pinyin_word.txt')
 

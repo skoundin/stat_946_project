@@ -1,10 +1,11 @@
 import random, os, sys
 import numpy as np
-from keras.models import *
-from keras.layers import *
-from keras.callbacks import *
-from keras.initializers import *
+from tensorflow.keras.models import *
+from tensorflow.keras.layers import *
+from tensorflow.keras.callbacks import *
+from tensorflow.keras.initializers import *
 import tensorflow as tf
+import tensorflow.keras.backend as K
 
 try:
 	from dataloader import TokenList, pad_to_longest
@@ -165,7 +166,7 @@ def GetPadMask(q, k):
 def GetSubMask(s):
 	len_s = tf.shape(s)[1]
 	bs = tf.shape(s)[:1]
-	mask = K.cumsum(tf.eye(len_s, batch_shape=bs), 1)
+	mask = tf.cumsum(tf.eye(len_s, batch_shape=bs), 1)
 	return mask
 
 class Encoder():
@@ -242,7 +243,7 @@ class Transformer:
 
 	def get_pos_seq(self, x):
 		mask = K.cast(K.not_equal(x, 0), 'int32')
-		pos = K.cumsum(K.ones_like(x, 'int32'), 1)
+		pos = tf.cumsum(K.ones_like(x, 'int32'), 1)
 		return pos * mask
 
 	def compile(self, optimizer='adam', active_layers=999):
