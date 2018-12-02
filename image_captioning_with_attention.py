@@ -315,8 +315,10 @@ if __name__ == '__main__':
     # Get Data
     # -----------------------------------------------------------------------------------
     print("Getting Data ...")
-    train_captions, img_name_vector = get_mscoco_data()
 
+    from filckr8k import get_flickr8k_data
+    # train_captions, img_name_vector = get_mscoco_data()
+    train_captions, img_name_vector = get_flickr8k_data()
     # -----------------------------------------------------------------------------------
     # Image Encoder
     # InceptionV3 model (pretrained on Imagenet). Feature Shape [2048, 64]
@@ -488,38 +490,38 @@ if __name__ == '__main__':
 
         for (batch, (img_tensor, true_caption)) in enumerate(dataset):
             loss = 0
+            if true_caption.shape[0] % 64 == 0:
+                # initializing the hidden state for each batch
+                # because the captions are not related from image to image
+                hidden = decoder.reset_state(batch_size=true_caption.shape[0])
 
-            # initializing the hidden state for each batch
-            # because the captions are not related from image to image
-            hidden = decoder.reset_state(batch_size=true_caption.shape[0])
+                dec_input = tf.expand_dims([tokenizer.word_index['<start>']] * BATCH_SIZE, 1)
 
-            dec_input = tf.expand_dims([tokenizer.word_index['<start>']] * BATCH_SIZE, 1)
+                with tf.GradientTape() as tape:
+                    features = encoder(img_tensor)
 
-            with tf.GradientTape() as tape:
-                features = encoder(img_tensor)
+                    for i in range(1, true_caption.shape[1]):
+                        # passing the features through the decoder
+                        predictions, hidden, _ = decoder(dec_input, features, hidden)
 
-                for i in range(1, true_caption.shape[1]):
-                    # passing the features through the decoder
-                    predictions, hidden, _ = decoder(dec_input, features, hidden)
+                        loss += loss_function(true_caption[:, i], predictions)
 
-                    loss += loss_function(true_caption[:, i], predictions)
+                        # using teacher forcing
+                        dec_input = tf.expand_dims(true_caption[:, i], 1)
 
-                    # using teacher forcing
-                    dec_input = tf.expand_dims(true_caption[:, i], 1)
+                total_loss += (loss / int(true_caption.shape[1]))
 
-            total_loss += (loss / int(true_caption.shape[1]))
+                variables = encoder.variables + decoder.variables
 
-            variables = encoder.variables + decoder.variables
+                gradients = tape.gradient(loss, variables)
 
-            gradients = tape.gradient(loss, variables)
+                optimizer.apply_gradients(zip(gradients, variables), tf.train.get_or_create_global_step())
 
-            optimizer.apply_gradients(zip(gradients, variables), tf.train.get_or_create_global_step())
-
-            if batch % 100 == 0:
-                print('Epoch {} Batch {} Loss {:.4f}'.format(
-                    epoch + 1,
-                    batch,
-                    loss.numpy() / int(true_caption.shape[1])))
+                if batch % 100 == 0:
+                    print('Epoch {} Batch {} Loss {:.4f}'.format(
+                        epoch + 1,
+                        batch,
+                        loss.numpy() / int(true_caption.shape[1])))
 
         # storing the epoch end loss value to plot later
         loss_plot.append(total_loss / len(cap_vector))
