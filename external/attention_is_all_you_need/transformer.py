@@ -29,32 +29,41 @@ class LayerNormalization(Layer):
 	def compute_output_shape(self, input_shape):
 		return input_shape
 
-class ScaledDotProductAttention():
-	def __init__(self, d_model, attn_dropout=0.1):
+
+class ScaledDotProductAttention:
+	def __init__(self, d_model, attn_dropout=0.1, name=None):
 		self.temper = np.sqrt(d_model)
 		self.dropout = Dropout(attn_dropout)
+		self.name = name
+
 	def __call__(self, q, k, v, mask):
-		attn = Lambda(lambda x:K.batch_dot(x[0],x[1],axes=[2,2])/self.temper)([q, k])
+
+		attn = Lambda(
+			lambda x: K.batch_dot(x[0], x[1], axes=[2, 2])/self.temper,
+			name='attention_' + self.name)([q, k])
+
 		if mask is not None:
-			mmask = Lambda(lambda x:(-1e+10)*(1-x))(mask)
+			mmask = Lambda(lambda x:(-1e+10)*(1-x), name='masked_attention_' + self.name)(mask)
 			attn = Add()([attn, mmask])
 		attn = Activation('softmax')(attn)
 		attn = self.dropout(attn)
-		output = Lambda(lambda x:K.batch_dot(x[0], x[1]))([attn, v])
+		output = Lambda(lambda x:K.batch_dot(x[0], x[1]), name='ATTENDED_' + self.name)([attn, v])
 		return output, attn
 
-class MultiHeadAttention():
+
+class MultiHeadAttention:
 	# mode 0 - big martixes, faster; mode 1 - more clear implementation
-	def __init__(self, n_head, d_model, d_k, d_v, dropout, mode=0, use_norm=True):
+	def __init__(self, n_head, d_model, d_k, d_v, dropout, mode=0, use_norm=True, name=None):
 		self.mode = mode
 		self.n_head = n_head
 		self.d_k = d_k
 		self.d_v = d_v
 		self.dropout = dropout
 		if mode == 0:
-			self.qs_layer = Dense(n_head*d_k, use_bias=False)
-			self.ks_layer = Dense(n_head*d_k, use_bias=False)
-			self.vs_layer = Dense(n_head*d_v, use_bias=False)
+			self.qs_layer = Dense(n_head*d_k, use_bias=False, name=name + '_query')
+			self.ks_layer = Dense(n_head*d_k, use_bias=False, name=name + '_key')
+			self.vs_layer = Dense(n_head*d_v, use_bias=False, name=name + '_value')
+
 		elif mode == 1:
 			self.qs_layers = []
 			self.ks_layers = []
@@ -63,9 +72,11 @@ class MultiHeadAttention():
 				self.qs_layers.append(TimeDistributed(Dense(d_k, use_bias=False)))
 				self.ks_layers.append(TimeDistributed(Dense(d_k, use_bias=False)))
 				self.vs_layers.append(TimeDistributed(Dense(d_v, use_bias=False)))
-		self.attention = ScaledDotProductAttention(d_model)
+
+		self.attention = ScaledDotProductAttention(d_model, name=name)
 		self.layer_norm = LayerNormalization() if use_norm else None
 		self.w_o = TimeDistributed(Dense(d_model))
+		self.name = name
 
 	def __call__(self, q, k, v, mask=None):
 		d_k, d_v = self.d_k, self.d_v
@@ -82,9 +93,9 @@ class MultiHeadAttention():
 				x = tf.transpose(x, [2, 0, 1, 3])  
 				x = tf.reshape(x, [-1, s[1], d_k])  # [n_head * batch_size, len_q, d_k]
 				return x
-			qs = Lambda(reshape1)(qs)
-			ks = Lambda(reshape1)(ks)
-			vs = Lambda(reshape1)(vs)
+			qs = Lambda(reshape1, name=self.name + '_query_reshape')(qs)
+			ks = Lambda(reshape1, name=self.name + '_key_reshape')(ks)
+			vs = Lambda(reshape1, name=self.name + '_value_reshape')(vs)
 
 			if mask is not None:
 				mask = Lambda(lambda x:K.repeat_elements(x, n_head, 0))(mask)
@@ -96,7 +107,7 @@ class MultiHeadAttention():
 				x = tf.transpose(x, [1, 2, 0, 3])
 				x = tf.reshape(x, [-1, s[1], n_head*d_v])  # [batch_size, len_v, n_head * d_v]
 				return x
-			head = Lambda(reshape2)(head)
+			head = Lambda(reshape2, name=self.name + '_query_reshape2')(head)
 		elif self.mode == 1:
 			heads = []; attns = []
 			for i in range(n_head):
@@ -127,20 +138,29 @@ class PositionwiseFeedForward():
 		output = Add()([output, x])
 		return self.layer_norm(output)
 
-class EncoderLayer():
-	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1):
-		self.self_att_layer = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-		self.pos_ffn_layer  = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
+
+class EncoderLayer:
+	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, enc_idx=None):
+		self.self_att_layer = MultiHeadAttention(
+			n_head, d_model, d_k, d_v, dropout=dropout, name='Encoder' + str(enc_idx))
+
+		self.pos_ffn_layer = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
+
 	def __call__(self, enc_input, mask=None):
 		output, slf_attn = self.self_att_layer(enc_input, enc_input, enc_input, mask=mask)
 		output = self.pos_ffn_layer(output)
 		return output, slf_attn
 
-class DecoderLayer():
-	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1):
-		self.self_att_layer = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-		self.enc_att_layer  = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
-		self.pos_ffn_layer  = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
+
+class DecoderLayer:
+	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, dropout=0.1, dec_idx=None):
+		self.self_att_layer = MultiHeadAttention(
+			n_head, d_model, d_k, d_v, dropout=dropout, name='decoder_self'+str(dec_idx))
+
+		self.enc_att_layer = MultiHeadAttention(
+			n_head, d_model, d_k, d_v, dropout=dropout, name='decoder_encoder'+str(dec_idx))
+		self.pos_ffn_layer = PositionwiseFeedForward(d_model, d_inner_hid, dropout=dropout)
+
 	def __call__(self, dec_input, enc_output, self_mask=None, enc_mask=None):
 		output, slf_attn = self.self_att_layer(dec_input, dec_input, dec_input, mask=self_mask)
 		output, enc_attn = self.enc_att_layer(output, enc_output, enc_output, mask=enc_mask)
@@ -157,11 +177,13 @@ def get_pos_encoding_matrix(max_len, d_emb):
 	pos_enc[1:, 1::2] = np.cos(pos_enc[1:, 1::2])  # dim 2i+1
 	return pos_enc
 
+
 def GetPadMask(q, k):
 	ones = K.expand_dims(K.ones_like(q, 'float32'), -1)
 	mask = K.cast(K.expand_dims(K.not_equal(k, 0), 1), 'float32')
-	mask = K.batch_dot(ones, mask, axes=[2,1])
+	mask = K.batch_dot(ones, mask, axes=[2, 1])
 	return mask
+
 
 def GetSubMask(s):
 	len_s = tf.shape(s)[1]
@@ -169,44 +191,61 @@ def GetSubMask(s):
 	mask = tf.cumsum(tf.eye(len_s, batch_shape=bs), 1)
 	return mask
 
-class Encoder():
-	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, \
-				layers=6, dropout=0.1, word_emb=None, pos_emb=None):
+
+class Encoder:
+	def __init__(
+			self, d_model, d_inner_hid, n_head, d_k, d_v, layers=6, dropout=0.1, word_emb=None, pos_emb=None):
 		self.emb_layer = word_emb
 		self.pos_layer = pos_emb
 		self.emb_dropout = Dropout(dropout)
-		self.layers = [EncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout) for _ in range(layers)]
+		self.layers = [EncoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout, enc_idx=i) for i in range(layers)]
+
 	def __call__(self, src_seq, src_pos, return_att=False, active_layers=999):
 		x = self.emb_layer(src_seq)
 		if src_pos is not None:
 			pos = self.pos_layer(src_pos)
 			x = Add()([x, pos])
+
 		x = self.emb_dropout(x)
-		if return_att: atts = []
-		mask = Lambda(lambda x:GetPadMask(x, x))(src_seq)
+
+		if return_att:
+			atts = []
+
+		mask = Lambda(lambda x1: GetPadMask(x1, x1))(src_seq)
+
 		for enc_layer in self.layers[:active_layers]:
 			x, att = enc_layer(x, mask)
-			if return_att: atts.append(att)
+			if return_att:
+				atts.append(att)
 		return (x, atts) if return_att else x
 
-class Decoder():
-	def __init__(self, d_model, d_inner_hid, n_head, d_k, d_v, \
-			  layers=6, dropout=0.1, word_emb=None, pos_emb=None):
+
+class Decoder:
+	def __init__(
+			self, d_model, d_inner_hid, n_head, d_k, d_v, layers=6, dropout=0.1, word_emb=None, pos_emb=None):
 		self.emb_layer = word_emb
 		self.pos_layer = pos_emb
-		self.layers = [DecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout) for _ in range(layers)]
+		self.layers = \
+			[DecoderLayer(d_model, d_inner_hid, n_head, d_k, d_v, dropout, dec_idx=i) for i in range(layers)]
+
 	def __call__(self, tgt_seq, tgt_pos, src_seq, enc_output, return_att=False, active_layers=999):
 		dec = self.emb_layer(tgt_seq)
 		pos = self.pos_layer(tgt_pos)
 		x = Add()([dec, pos])
 
-		self_pad_mask = Lambda(lambda x:GetPadMask(x, x))(tgt_seq)
-		self_sub_mask = Lambda(GetSubMask)(tgt_seq)
-		self_mask = Lambda(lambda x:K.minimum(x[0], x[1]))([self_pad_mask, self_sub_mask])
-		
-		enc_mask = Lambda(lambda x:GetPadMask(x[0], x[1]))([tgt_seq, src_seq])
+		self_pad_mask = Lambda(lambda x1: GetPadMask(x1, x1), name='pad_mask')(tgt_seq)
+		self_sub_mask = Lambda(GetSubMask, name='sub_mask')(tgt_seq)
+		self_mask = \
+			Lambda(lambda x1: K.minimum(x1[0], x1[1]), name='min_sub_or_pad_mask')([self_pad_mask, self_sub_mask])
 
-		if return_att: self_atts, enc_atts = [], []
+		if src_seq is not None:
+			enc_mask = Lambda(lambda x1: GetPadMask(x1[0], x1[1]))([tgt_seq, src_seq])
+		else:
+			enc_mask = None
+
+		if return_att:
+			self_atts, enc_atts = [], []
+
 		for dec_layer in self.layers[:active_layers]:
 			x, self_att, enc_att = dec_layer(x, enc_output, self_mask, enc_mask)
 			if return_att: 
@@ -214,31 +253,41 @@ class Decoder():
 				enc_atts.append(enc_att)
 		return (x, self_atts, enc_atts) if return_att else x
 
+
 class Transformer:
-	def __init__(self, i_tokens, o_tokens, len_limit, d_model=256, \
-			  d_inner_hid=512, n_head=4, d_k=64, d_v=64, layers=2, dropout=0.1, \
-			  share_word_emb=False):
+	def __init__(
+			self, i_tokens, o_tokens, len_limit, d_model=256, d_inner_hid=512, n_head=4, d_k=64, d_v=64,
+			layers=2, dropout=0.1, share_word_emb=False):
+
 		self.i_tokens = i_tokens
 		self.o_tokens = o_tokens
 		self.len_limit = len_limit
 		self.src_loc_info = True
 		self.d_model = d_model
 		self.decode_model = None
+
 		d_emb = d_model
 
-		pos_emb = Embedding(len_limit, d_emb, trainable=False, \
-							weights=[get_pos_encoding_matrix(len_limit, d_emb)])
+		pos_emb = Embedding(
+			len_limit, d_emb,
+			trainable=False,
+			weights=[get_pos_encoding_matrix(len_limit, d_emb)],
+			name='position_embedding'
+		)
 
-		i_word_emb = Embedding(i_tokens.num(), d_emb)
+		i_word_emb = Embedding(i_tokens.num(), d_emb, name='src_lang_embedding')
 		if share_word_emb: 
 			assert i_tokens.num() == o_tokens.num()
 			o_word_emb = i_word_emb
-		else: o_word_emb = Embedding(o_tokens.num(), d_emb)
+		else:
+			o_word_emb = Embedding(o_tokens.num(), d_emb, name='tgt_lang_embedding')
 
-		self.encoder = Encoder(d_model, d_inner_hid, n_head, d_k, d_v, layers, dropout, \
-							word_emb=i_word_emb, pos_emb=pos_emb)
-		self.decoder = Decoder(d_model, d_inner_hid, n_head, d_k, d_v, layers, dropout, \
-							word_emb=o_word_emb, pos_emb=pos_emb)
+		self.encoder = Encoder(
+			d_model, d_inner_hid, n_head, d_k, d_v, layers, dropout, word_emb=i_word_emb, pos_emb=pos_emb)
+
+		self.decoder = Decoder(
+			d_model, d_inner_hid, n_head, d_k, d_v, layers, dropout, word_emb=o_word_emb, pos_emb=pos_emb)
+
 		self.target_layer = TimeDistributed(Dense(o_tokens.num(), use_bias=False))
 
 	def get_pos_seq(self, x):
@@ -247,19 +296,24 @@ class Transformer:
 		return pos * mask
 
 	def compile(self, optimizer='adam', active_layers=999):
-		src_seq_input = Input(shape=(None,), dtype='int32')
-		tgt_seq_input = Input(shape=(None,), dtype='int32')
+		src_seq_input = Input(shape=(None,), dtype='int32', name='src_lang_in')
+		tgt_seq_input = Input(shape=(None,), dtype='int32', name='tgt_lang_in')
+
+		tgt_seq = Lambda(lambda x1: x1[:, :-1], name='tgt_seq')(tgt_seq_input)
+		tgt_true = Lambda(lambda x1: x1[:, 1:], name='tgt_true')(tgt_seq_input)
 
 		src_seq = src_seq_input
-		tgt_seq  = Lambda(lambda x:x[:,:-1])(tgt_seq_input)
-		tgt_true = Lambda(lambda x:x[:,1:])(tgt_seq_input)
 
-		src_pos = Lambda(self.get_pos_seq)(src_seq)
-		tgt_pos = Lambda(self.get_pos_seq)(tgt_seq)
-		if not self.src_loc_info: src_pos = None
+		# src_seq = [43, 10, 20, 45, 0, 0, 0, 0]  # tokenized words (sequence)
+		# src_pos = [ 1,  2,  3,  4, 0, 0, 0, 0]
+		src_pos = Lambda(self.get_pos_seq, name='get_pos_seq_src')(src_seq)
+		tgt_pos = Lambda(self.get_pos_seq, name='get_pos_seq_tgt')(tgt_seq)
+		if not self.src_loc_info:
+			src_pos = None
 
 		enc_output = self.encoder(src_seq, src_pos, active_layers=active_layers)
-		dec_output = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output, active_layers=active_layers)	
+
+		dec_output = self.decoder(tgt_seq, tgt_pos, src_seq, enc_output, active_layers=active_layers)
 		final_output = self.target_layer(dec_output)
 
 		def get_loss(args):
@@ -278,9 +332,9 @@ class Transformer:
 			corr = K.sum(corr * mask, -1) / K.sum(mask, -1)
 			return K.mean(corr)
 				
-		loss = Lambda(get_loss)([final_output, tgt_true])
-		self.ppl = Lambda(K.exp)(loss)
-		self.accu = Lambda(get_accu)([final_output, tgt_true])
+		loss = Lambda(get_loss, name='get_loss')([final_output, tgt_true])
+		self.ppl = Lambda(K.exp, name='exponential_loss')(loss)
+		self.accu = Lambda(get_accu, name='get_acc')([final_output, tgt_true])
 
 		self.model = Model([src_seq_input, tgt_seq_input], loss)
 		self.model.add_loss([loss])
