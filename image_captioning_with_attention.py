@@ -302,7 +302,8 @@ def plot_attention(x, result1, attention_plt):
     plt.tight_layout()
     plt.show()
 
-def eval_flickr(img_name_val,cap_val):
+def eval_flickr(img_name_val,cap_val,index_word):
+  print("Calculating BLEU")  
   from nltk.translate.bleu_score import corpus_bleu
   from nltk.translate.bleu_score import SmoothingFunction
   smoothie = SmoothingFunction()
@@ -573,6 +574,8 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     print("Starting Evaluation ...")
     
+    eval_flickr(img_name_val,cap_val,index_word)
+    
     # captions on the validation set
     rid = np.random.randint(0, len(img_name_val))
     image = img_name_val[rid]
@@ -601,7 +604,7 @@ if __name__ == '__main__':
     plot_attention(image_path, result, attention_plot)
     
     #Get BLEU Scores
-    eval_flickr(img_name_val,cap_val)
+    eval_flickr(img_name_val,cap_val,index_word)
     
     # opening the image
     Image.open(image_path)
