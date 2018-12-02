@@ -302,7 +302,32 @@ def plot_attention(x, result1, attention_plt):
     plt.tight_layout()
     plt.show()
 
-
+def eval_flickr(img_name_val,cap_val):
+  from nltk.translate.bleu_score import corpus_bleu
+  from nltk.translate.bleu_score import SmoothingFunction
+  smoothie = SmoothingFunction()
+  y=0
+  actual,predicted = list(),list()
+  for img in img_name_val:
+    if(y>1000):
+      break
+    y = y+1
+    indices = [i for i, x in enumerate(img_name_val) if x == img]
+    real_caption = []
+    for j in indices:
+      #caps.append(train_captions[j])
+      real_caption.append(' '.join([index_word[i] for i in cap_val[j] if i not in [0,1]]))
+    ref = []
+    for d in real_caption:
+      l = d.split()
+      #l.remove('<start>')
+      ref.append(l)
+    actual.append(ref)
+    result, attention_plot = evaluate(img)
+    result = ['<start>'] + result
+    if(result[-1]!='<end>'):
+      result = result + ['<end>']
+    predicted.append(result)
 if __name__ == '__main__':
 
     # -----------------------------------------------------------------------------------
@@ -547,7 +572,7 @@ if __name__ == '__main__':
     #  And store the attention weights for every time step.
     # -----------------------------------------------------------------------------------
     print("Starting Evaluation ...")
-
+    
     # captions on the validation set
     rid = np.random.randint(0, len(img_name_val))
     image = img_name_val[rid]
@@ -574,5 +599,10 @@ if __name__ == '__main__':
     result, attention_plot = evaluate(image_path)
     print('Prediction Caption:', ' '.join(result))
     plot_attention(image_path, result, attention_plot)
+    
+    #Get BLEU Scores
+    eval_flickr(img_name_val,cap_val)
+    
     # opening the image
     Image.open(image_path)
+    
