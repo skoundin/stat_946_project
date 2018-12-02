@@ -509,7 +509,7 @@ if __name__ == '__main__':
     loss_plot = []
 
     EPOCHS = 20
-
+    
     for epoch in range(EPOCHS):
         start = datetime.now()
         total_loss = 0
@@ -573,9 +573,6 @@ if __name__ == '__main__':
     #  And store the attention weights for every time step.
     # -----------------------------------------------------------------------------------
     print("Starting Evaluation ...")
-    
-    eval_flickr(img_name_val,cap_val,index_word)
-    
     # captions on the validation set
     rid = np.random.randint(0, len(img_name_val))
     image = img_name_val[rid]
