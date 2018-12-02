@@ -275,6 +275,8 @@ def evaluate(x):
         attention_plt[ii] = tf.reshape(attention_weights, (-1, )).numpy()
 
         predicted_id = tf.argmax(predictions1[0]).numpy()
+        if predicted_id == 1:
+          predicted_id = 0
         result1.append(index_word[predicted_id])
 
         if index_word[predicted_id] == '<end>':
