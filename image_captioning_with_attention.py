@@ -269,7 +269,7 @@ def evaluate(x):
     result1 = []
 
     for ii in range(max_length):
-        print("Iteration {} of {}".format(ii, max_length))
+        #print("Iteration {} of {}".format(ii, max_length))
         predictions1, hidden1, attention_weights = decoder(dec_input1, features1, hidden1)
 
         attention_plt[ii] = tf.reshape(attention_weights, (-1, )).numpy()
