@@ -403,6 +403,8 @@ if __name__ == '__main__':
         to_file=os.path.join(results_dir, 'model.png'),
         show_shapes=True)
 
+    caption_model.training_model.summary()
+
     # -----------------------------------------------------------------------------------
     # Training
     # -----------------------------------------------------------------------------------
@@ -434,7 +436,7 @@ if __name__ == '__main__':
         steps_per_epoch=(num_train // batch_size),
         verbose=1,
         validation_data=val_data_generator,
-        validation_steps=10,
+        validation_steps=(num_val // batch_size),
         # max_q_size=1,
         workers=8,
         callbacks=[learning_rate_modifying_cb, model_saver]
@@ -455,11 +457,20 @@ if __name__ == '__main__':
 
     f.savefig(os.path.join(results_dir, 'training.eps'), format='eps')
 
+    summary_file = os.path.join(results_dir, 'summary.text')
+    with open(summary_file, 'w') as handle:
+        handle.write("Final Train Loss: {}\n".format(history.history['loss'][-1]))
+        handle.write("Final Validation Loss: {}\n".format(history.history['val_loss'][-1]))
+        handle.write("Final Train Accuracy: {}\n".format(history.history['accu'][-1]))
+        handle.write("Final Validation Accuracy: {}\n".format(history.history['val_accu'][-1]))
+        handle.write("\n")
+        handle.write("Number of Parameters {}\n".format(caption_model.training_model.count_params()))
+
     # -----------------------------------------------------------------------------------
     # Prediction
     # -----------------------------------------------------------------------------------
     # Sample image
-    sample_img_idx_arr = [201, 10]
+    sample_img_idx_arr = [201, 10, 5, 500, 30]
     for sample_img_idx in sample_img_idx_arr:
         example_img_name = img_name_vector[sample_img_idx]
         # TODO: Start from images that dont have a start and end
