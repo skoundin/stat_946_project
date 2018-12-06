@@ -68,9 +68,9 @@ if 'test' in sys.argv:
     while True:
         quest = input('> ')
         print(s2s.decode_sequence_fast(quest.split(), delimiter=' '))
-        rets = s2s.beam_search(quest.split(), delimiter=' ')
-        for x, y in rets:
-            print(x, y)
+        # rets = s2s.beam_search(quest.split(), delimiter=' ')
+        # for x, y in rets:
+        #     print(x, y)
 else:
     print("Training Model ...")
     start_time = datetime.now()
