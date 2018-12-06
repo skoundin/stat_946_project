@@ -426,13 +426,13 @@ if __name__ == '__main__':
     sample_img_idx_arr = [201, 10]
     for sample_img_idx in sample_img_idx_arr:
         example_img_name = img_name_vector[sample_img_idx]
-        #TODO: Start from images that dont have a start and end
+        # TODO: Start from images that dont have a start and end
         example_img_caption = train_captions[sample_img_idx]
 
         from PIL import Image
         temp_image = np.array(Image.open(example_img_name))
+        plt.figure()
         plt.imshow(temp_image)
-        plt.title("caption: {}".format(example_img_caption))
 
         # Extract hidden layer features
         x_img = load_image(example_img_name)
@@ -452,7 +452,7 @@ if __name__ == '__main__':
             output = caption_model.model.predict_on_batch([hidden_feature_input, target_seq])
             sampled_index = np.argmax(output[1][0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
-            print(sampled_token)
+            print("{}: output word: {}".format(i, sampled_token))
             decoded_tokens.append(sampled_token)
 
             if sampled_token == '<end>':
@@ -463,5 +463,10 @@ if __name__ == '__main__':
         print("Decoded: {}".format(decoded_tokens))
         print("True: {}".format(example_img_caption))
 
+        print("Decoded: {}".format(' '.join(decoded_tokens[:-1])))
 
+        example_img_caption = example_img_caption.replace('<start>', '')
+        example_img_caption = example_img_caption.replace('<end>', '')
+        print("True: {}".format(example_img_caption))
 
+        plt.title("True: {}\n Predicted: {} ".format(example_img_caption, ' '.join(decoded_tokens[:-1])))
