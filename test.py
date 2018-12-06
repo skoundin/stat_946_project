@@ -21,8 +21,9 @@ from image_captioning_with_attention import CnnEncoder, get_mscoco_data, calc_ma
     train_test_split, load_image
 
 
+# noinspection PyAttributeOutsideInit
 class DataGenerator(tf.keras.utils.Sequence):
-    def __init__(self, data_key_dict, b_size=32, feature_size=(64, 2048), max_caption_len=70, shuffle=True):
+    def __init__(self, data_key_dict, b_size=32, feature_size=(64, 2048), max_cap_len=70, shuffle=True):
         """
         A Python generator (actually a keras sequencer object) that can be used to
         dynamically load images when the batch is run. Saves a lot on memory.
@@ -42,7 +43,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         self.feature_size = feature_size
         self.batch_size = b_size
         self.data_key_dict = data_key_dict
-        self.max_caption_len = max_caption_len
+        self.max_caption_len = max_cap_len
 
         self.list_ids = list(self.data_key_dict)
         self.on_epoch_end()
@@ -98,6 +99,7 @@ class DataGenerator(tf.keras.utils.Sequence):
         return x_arr, y_arr
 
 
+# noinspection PyAttributeOutsideInit
 class CaptionTransformer:
     def __init__(
             self, d_embed, d_model, d_hidden, n_attn_heads, d_k, d_v, n_decoder_layers,
@@ -136,7 +138,7 @@ class CaptionTransformer:
         pos = tf.cumsum(K.ones_like(x, 'int32'), 1)
         return pos * mask
 
-    def compile(self, optimizer='adam', active_layers=999):
+    def compile(self, opt='adam', active_layers=999):
 
         # This is for Teacher Forcing
         img_features = Input(shape=(64, 2048,), dtype='float32', name='image_features')
@@ -174,33 +176,18 @@ class CaptionTransformer:
         self.ppl = Lambda(K.exp, name='exponential_loss')(loss)
         self.accu = Lambda(get_accuracy, name='get_accuracy')([final_output, tgt_true])
 
-        self.model = Model([img_features, tgt_seq_input], [loss, final_output])
-        self.model.add_loss([loss])
+        self.training_model = Model([img_features, tgt_seq_input], loss)
+        self.training_model.add_loss([loss])
 
-        # TODO: What is this for
-        self.output_model = Model([img_features, tgt_seq_input], final_output)
-        self.output_model.compile(optimizer, 'mean_squared_error')
+        # This Model does not do Teacher Forcing and should be used on test/validation data
+        self.prediction_model = Model([img_features, tgt_seq_input], final_output)
+        self.prediction_model.compile(opt, 'mean_squared_error')
 
-        self.model.compile(optimizer, None)
-        self.model.metrics_names.append('ppl')
-        self.model.metrics_tensors.append(self.ppl)
-        self.model.metrics_names.append('accu')
-        self.model.metrics_tensors.append(self.accu)
-
-        # ------------------------------------------------------------------------------
-        # prediction model
-        # ------------------------------------------------------------------------------
-        img_features_1 = Input(shape=(64, 2048,), dtype='float32', name='image_features_1')
-        dec_output_seq = Input(shape=(None,), dtype='int32', name='previous_decoder_out')
-
-        tgt_pos_1 = Lambda(self.get_pos_seq, name='map_tgt_seq_to_pos_vector_1')(dec_output_seq)
-        enc_output_1 = self.encoder(img_features_1)
-
-        dec_output_1 = self.decoder(dec_output_seq, tgt_pos_1, None, enc_output_1, active_layers=active_layers)
-        final_output_1 = self.map_to_word_tokens_layer(dec_output_1)
-
-        self.prediction_model = Model([img_features_1, dec_output_seq], final_output_1)
-        self.prediction_model.compile(optimizer, 'mean_squared_error')
+        self.training_model.compile(opt, None)
+        self.training_model.metrics_names.append('ppl')
+        self.training_model.metrics_tensors.append(self.ppl)
+        self.training_model.metrics_names.append('accu')
+        self.training_model.metrics_tensors.append(self.accu)
 
 
 if __name__ == '__main__':
@@ -326,7 +313,7 @@ if __name__ == '__main__':
         train_data_dict,
         b_size=batch_size,
         shuffle=True,
-        max_caption_len=max_caption_len,
+        max_cap_len=max_caption_len,
         feature_size=extracted_img_feature_dim
     )
 
@@ -341,7 +328,7 @@ if __name__ == '__main__':
         valid_data_dict,
         b_size=batch_size,
         shuffle=True,
-        max_caption_len=max_caption_len,
+        max_cap_len=max_caption_len,
         feature_size=extracted_img_feature_dim
     )
 
@@ -382,20 +369,36 @@ if __name__ == '__main__':
         v_size=VOCAB_LENGTH,
     )
 
-    caption_model.compile(optimizer=Adam(0.001, 0.9, 0.98, epsilon=1e-9))
+    optimizer = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+    # optimizer = Adam(0.001, 0.9, 0.98, epsilon=1e-9)
+    caption_model.compile(optimizer)
 
     print("Saving Model Architecture")
-    plot_model(caption_model.model, to_file='model.png', show_shapes=True)
+    plot_model(caption_model.training_model, to_file='model.png', show_shapes=True)
 
     # -----------------------------------------------------------------------------------
     # Training
     # -----------------------------------------------------------------------------------
     print("Training Model ...")
 
-    num_epochs = 10
+    num_epochs = 100
     start_time = datetime.now()
 
-    history = caption_model.model.fit_generator(
+
+    def learning_rate_modifier(epoch_idx, curr_learning_rate):
+        if epoch_idx == (num_epochs // 2.0):
+            curr_learning_rate = curr_learning_rate / 10.0
+        elif epoch_idx == (num_epochs // 4.0 * 3):
+            curr_learning_rate = curr_learning_rate / 10.0
+
+        return curr_learning_rate
+
+    learning_rate_modifying_cb = LearningRateScheduler(
+        learning_rate_modifier,
+        verbose=1
+    )
+
+    history = caption_model.training_model.fit_generator(
         generator=train_data_generator,
         epochs=num_epochs,
         steps_per_epoch=(num_train // batch_size),
@@ -404,7 +407,7 @@ if __name__ == '__main__':
         validation_steps=10,
         # max_q_size=1,
         workers=8,
-        # callbacks=training_cb
+        callbacks=[learning_rate_modifying_cb]
     )
     print("Training took {}".format(datetime.now() - start_time))
 
@@ -437,7 +440,8 @@ if __name__ == '__main__':
         # Extract hidden layer features
         x_img = load_image(example_img_name)
         x_img_features = image_features_extract_model(K.expand_dims(x_img[0], axis=0))
-        hidden_feature_input = K.reshape(x_img_features, (1, 64, 2048))
+        # hidden_feature_input = K.reshape(x_img_features, (1, 64, 2048))
+        hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
 
         # Tokenize the caption:
         # Expects a list of captions
@@ -449,7 +453,7 @@ if __name__ == '__main__':
         target_seq[0, 0] = tokenizer.word_index['<start>']
 
         for i in range(max_caption_len - 1):
-            output = caption_model.model.predict_on_batch([hidden_feature_input, target_seq])
+            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, target_seq])
             sampled_index = np.argmax(output[1][0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
             print("{}: output word: {}".format(i, sampled_token))
