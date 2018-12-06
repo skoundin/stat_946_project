@@ -412,7 +412,7 @@ if __name__ == '__main__':
     ax_arr[0].plot(history.history['loss'], label='train', color='b')
     ax_arr[0].plot(history.history['val_loss'], label='validation', color='r')
     ax_arr[0].set_xlabel("Epochs")
-    ax_arr[0].sey_ylabel("Loss")
+    ax_arr[0].set_ylabel("Loss")
 
     ax_arr[1].plot(history.history['accu'], label='train', color='b')
     ax_arr[1].plot(history.history['val_accu'], label='validation', color='r')
