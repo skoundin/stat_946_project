@@ -439,6 +439,7 @@ if __name__ == '__main__':
     ax_arr[1].plot(history.history['val_accu'], label='validation', color='r')
     ax_arr[1].set_xlabel("Epochs")
     ax_arr[1].set_ylabel("Accuracy")
+    ax_arr[1].legend()
 
     f.savefig(os.path.join(results_dir, 'training.eps'), format='eps')
 
@@ -493,4 +494,4 @@ if __name__ == '__main__':
         example_img_caption = example_img_caption.replace('<end>', '')
         print("True: {}".format(example_img_caption))
 
-        plt.title("True: {}\n Predicted: {} ".format(example_img_caption, ' '.join(decoded_tokens[:-1])))
+        plt.title("True: {}\n Predicted: {} ".format(example_img_caption, ' '.join(decoded_tokens[:-1])), loc='left')
