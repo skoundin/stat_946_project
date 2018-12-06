@@ -3,7 +3,7 @@
 # ---------------------------------------------------------------------------------------
 import matplotlib.pyplot as plt
 from datetime import datetime
-import tqdm
+from tqdm import tqdm
 import numpy as np
 from tensorflow.keras.utils import plot_model
 
@@ -212,7 +212,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Get Data
     # -----------------------------------------------------------------------------------
-    print("Getting Data ...")
+    print("Getting Data {}".format('.' * 80))
     train_captions, img_name_vector = get_mscoco_data()
 
     # Don't include the top, we only need the features from the last layer, not the classifier
@@ -439,7 +439,7 @@ if __name__ == '__main__':
 
         for i in range(max_caption_len - 1):
             output = caption_model.model.predict_on_batch([hidden_feature_input, target_seq])
-            sampled_index = np.argmax(output[0, i, :])
+            sampled_index = np.argmax(output[1][0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
             print(sampled_token)
             decoded_tokens.append(sampled_token)
