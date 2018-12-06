@@ -141,21 +141,22 @@ class CaptionTransformer:
         pos = tf.cumsum(K.ones_like(x, 'int32'), 1)
         return pos * mask
 
-    def compile(self, opt='adam', active_layers=999):
+    def compile(self, opt, active_layers=999):
 
         # This is for Teacher Forcing
         img_features = Input(shape=(64, 2048,), dtype='float32', name='image_features')
         tgt_seq_input = Input(shape=(None,), dtype='int32', name='true_caption')
 
-        tgt_seq = Lambda(lambda x1: x1[:, :-1], name='tgt_seq')(tgt_seq_input)
-        tgt_true = Lambda(lambda x1: x1[:, 1:], name='tgt_true')(tgt_seq_input)
+        # Teacher Forcing caption
+        tf_cap_seq = Lambda(lambda x1: x1[:, :-1], name='tf_cap_seq')(tgt_seq_input)
+        true_cap_seq = Lambda(lambda x1: x1[:, 1:], name='true_cap_seq')(tgt_seq_input)
 
-        # tgt_seq = [43, 10, 20, 45, 0, 0, 0, 0]  # tokenized words (sequence)
+        # tf_cap_seq = [43, 10, 20, 45, 0, 0, 0, 0]  # tokenized words (sequence)
         # tgt_pos = [ 1,  2,  3,  4, 0, 0, 0, 0]
-        tgt_pos = Lambda(self.get_pos_seq, name='map_tgt_seq_to_pos_vector')(tgt_seq)
+        tgt_pos = Lambda(self.get_pos_seq, name='map_tf_seq_to_pos_vector')(tf_cap_seq)
 
         enc_output = self.encoder(img_features)
-        dec_output = self.decoder(tgt_seq, tgt_pos, None, enc_output, active_layers=active_layers)
+        dec_output = self.decoder(tf_cap_seq, tgt_pos, None, enc_output, active_layers=active_layers)
         final_output = self.map_to_word_tokens_layer(dec_output)
 
         def get_loss(args):
@@ -174,23 +175,34 @@ class CaptionTransformer:
             corr = K.sum(corr * mask, -1) / K.sum(mask, -1)
             return K.mean(corr)
 
-        loss = Lambda(get_loss, name='get_loss')([final_output, tgt_true])
+        loss = Lambda(get_loss, name='get_loss')([final_output, true_cap_seq])
 
         self.ppl = Lambda(K.exp, name='exponential_loss')(loss)
-        self.accu = Lambda(get_accuracy, name='get_accuracy')([final_output, tgt_true])
+        self.accu = Lambda(get_accuracy, name='get_accuracy')([final_output, true_cap_seq])
 
         self.training_model = Model([img_features, tgt_seq_input], loss)
         self.training_model.add_loss([loss])
-
-        # This Model does not do Teacher Forcing and should be used on test/validation data
-        self.prediction_model = Model([img_features, tgt_seq_input], final_output)
-        self.prediction_model.compile(opt, 'mean_squared_error')
 
         self.training_model.compile(opt, None)
         self.training_model.metrics_names.append('ppl')
         self.training_model.metrics_tensors.append(self.ppl)
         self.training_model.metrics_names.append('accu')
         self.training_model.metrics_tensors.append(self.accu)
+
+        # This Model does not do Teacher Forcing and should be used on test/validation data
+        # ---------------------------------------------------------------------------------
+        img_features_1 = Input(shape=(64, 2048,), dtype='float32', name='image_features_1')
+        tgt_seq_input_1 = Input(shape=(None,), dtype='int32', name='decoder_output')
+        tgt_seq_1 = tgt_seq_input_1
+
+        tgt_pos = Lambda(self.get_pos_seq)(tgt_seq_1)
+
+        enc_output_1 = self.encoder(img_features_1)
+        dec_output_1 = self.decoder(tgt_seq_1, tgt_pos, None, enc_output_1,  active_layers=active_layers)
+        final_output_1 = self.map_to_word_tokens_layer(dec_output_1)
+
+        self.prediction_model = Model([img_features_1, tgt_seq_input_1], final_output_1)
+        self.prediction_model.compile(opt, 'mean_squared_error')
 
 
 if __name__ == '__main__':
@@ -396,7 +408,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     print("Training Model ...")
 
-    num_epochs = 10
+    num_epochs = 30
     start_time = datetime.now()
 
 
@@ -461,13 +473,12 @@ if __name__ == '__main__':
         # Extract hidden layer features
         x_img = load_image(example_img_name)
         x_img_features = image_features_extract_model(K.expand_dims(x_img[0], axis=0))
-        # hidden_feature_input = K.reshape(x_img_features, (1, 64, 2048))
         hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
 
         # Tokenize the caption:
         # Expects a list of captions
         x_img_cap = tokenizer.texts_to_sequences([example_img_caption])
-        x_img_cap = tf.keras.preprocessing.sequence.pad_sequences(x_img_cap, maxlen=max_caption_len, padding='post')
+        # x_img_cap = tf.keras.preprocessing.sequence.pad_sequences(x_img_cap, maxlen=max_caption_len, padding='post')
 
         decoded_tokens = []
         target_seq = np.zeros((1, max_caption_len), dtype='int32')
@@ -484,9 +495,6 @@ if __name__ == '__main__':
                 break
 
             target_seq[0, i + 1] = sampled_index
-
-        print("Decoded: {}".format(decoded_tokens))
-        print("True: {}".format(example_img_caption))
 
         print("Decoded: {}".format(' '.join(decoded_tokens[:-1])))
 
