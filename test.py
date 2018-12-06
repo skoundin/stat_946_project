@@ -3,6 +3,7 @@
 # ---------------------------------------------------------------------------------------
 import matplotlib.pyplot as plt
 from datetime import datetime
+import os
 from tqdm import tqdm
 import numpy as np
 from tensorflow.keras.utils import plot_model
@@ -19,6 +20,8 @@ from external.attention_is_all_you_need.transformer import get_pos_encoding_matr
 
 from image_captioning_with_attention import CnnEncoder, get_mscoco_data, calc_max_length, \
     train_test_split, load_image
+
+BASE_RESULTS_DIR = 'models'
 
 
 # noinspection PyAttributeOutsideInit
@@ -195,6 +198,15 @@ if __name__ == '__main__':
     # Initialization
     # -----------------------------------------------------------------------------------
     plt.ion()
+    results_identifier = 'captioning_transformer'
+
+    # Immutable
+    if not os.path.exists(BASE_RESULTS_DIR):
+        os.mkdir(BASE_RESULTS_DIR)
+
+    results_dir = os.path.join(BASE_RESULTS_DIR, results_identifier)
+    if not os.path.exists(results_dir):
+        os.mkdir(results_dir)
 
     # -----------------------------------------------------------------------------------
     # Get Data
@@ -374,14 +386,17 @@ if __name__ == '__main__':
     caption_model.compile(optimizer)
 
     print("Saving Model Architecture")
-    plot_model(caption_model.training_model, to_file='model.png', show_shapes=True)
+    plot_model(
+        caption_model.training_model,
+        to_file=os.path.join(results_dir, 'model.png'),
+        show_shapes=True)
 
     # -----------------------------------------------------------------------------------
     # Training
     # -----------------------------------------------------------------------------------
     print("Training Model ...")
 
-    num_epochs = 100
+    num_epochs = 10
     start_time = datetime.now()
 
 
@@ -398,6 +413,9 @@ if __name__ == '__main__':
         verbose=1
     )
 
+    model_save_file = os.path.join(results_dir, 'weights.h5')
+    model_saver = ModelCheckpoint(model_save_file, save_best_only=True, save_weights_only=True)
+
     history = caption_model.training_model.fit_generator(
         generator=train_data_generator,
         epochs=num_epochs,
@@ -407,7 +425,7 @@ if __name__ == '__main__':
         validation_steps=10,
         # max_q_size=1,
         workers=8,
-        callbacks=[learning_rate_modifying_cb]
+        callbacks=[learning_rate_modifying_cb, model_saver]
     )
     print("Training took {}".format(datetime.now() - start_time))
 
@@ -421,6 +439,8 @@ if __name__ == '__main__':
     ax_arr[1].plot(history.history['val_accu'], label='validation', color='r')
     ax_arr[1].set_xlabel("Epochs")
     ax_arr[1].set_ylabel("Accuracy")
+
+    f.savefig(os.path.join(results_dir, 'training.eps'), format='eps')
 
     # -----------------------------------------------------------------------------------
     # Prediction
@@ -454,7 +474,7 @@ if __name__ == '__main__':
 
         for i in range(max_caption_len - 1):
             output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, target_seq])
-            sampled_index = np.argmax(output[1][0, i, :])
+            sampled_index = np.argmax(output[0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
             print("{}: output word: {}".format(i, sampled_token))
             decoded_tokens.append(sampled_token)
