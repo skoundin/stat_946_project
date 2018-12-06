@@ -75,7 +75,7 @@ class DataGenerator(tf.keras.utils.Sequence):
 
         for img_idx, list_id in enumerate(list_ids_temp):
 
-            temp = np.load(train_image_names[img_idx] + '.npy')
+            temp = np.load(list_id + '.npy')
 
             x_arr[img_idx, ] = temp
             y_arr[img_idx, ] = self.data_key_dict[list_id]
