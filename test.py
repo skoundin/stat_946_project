@@ -210,7 +210,7 @@ if __name__ == '__main__':
     # Initialization
     # -----------------------------------------------------------------------------------
     plt.ion()
-    results_identifier = 'captioning_transformer'
+    results_identifier = 'captioning_transformer_mscoco_60000_6_layers'
 
     # Immutable
     if not os.path.exists(BASE_RESULTS_DIR):
@@ -224,7 +224,7 @@ if __name__ == '__main__':
     # Get Data
     # -----------------------------------------------------------------------------------
     print("Getting Data {}".format('.' * 80))
-    train_captions, img_name_vector = get_mscoco_data()
+    train_captions, img_name_vector = get_mscoco_data(n_train=60000)
 
     # Don't include the top, we only need the features from the last layer, not the classifier
     image_model = tf.keras.applications.InceptionV3(include_top=False, weights='imagenet')
@@ -377,7 +377,7 @@ if __name__ == '__main__':
     num_attention_heads = 8
     dim_key = 64
     dim_value = 64
-    num_decoder_layers = 2
+    num_decoder_layers = 6
     prob_dropout = 0.1
 
     caption_model = CaptionTransformer(
@@ -394,7 +394,7 @@ if __name__ == '__main__':
     )
 
     optimizer = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-    # optimizer = Adam(0.001, 0.9, 0.98, epsilon=1e-9)
+    # optimizer = Adam(0.0001, 0.9, 0.98, epsilon=1e-9)
     caption_model.compile(optimizer)
 
     print("Saving Model Architecture")
@@ -410,7 +410,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     print("Training Model ...")
 
-    num_epochs = 30
+    num_epochs = 100
     start_time = datetime.now()
 
 
@@ -439,7 +439,7 @@ if __name__ == '__main__':
         validation_steps=(num_val // batch_size),
         # max_q_size=1,
         workers=8,
-        callbacks=[learning_rate_modifying_cb, model_saver]
+        callbacks=[model_saver, learning_rate_modifying_cb]
     )
     print("Training took {}".format(datetime.now() - start_time))
 
@@ -464,7 +464,11 @@ if __name__ == '__main__':
         handle.write("Final Train Accuracy: {}\n".format(history.history['accu'][-1]))
         handle.write("Final Validation Accuracy: {}\n".format(history.history['val_accu'][-1]))
         handle.write("\n")
-        handle.write("Number of Parameters {}\n".format(caption_model.training_model.count_params()))
+        handle.write("Number of parameters {}\n".format(caption_model.training_model.count_params()))
+        handle.write("Number of attention heads {}\n".format(num_attention_heads))
+        handle.write("Number of Decoder Layers heads {}\n".format(num_decoder_layers))
+        handle.write("\n")
+        handle.write("Number of Epochs {}\n".format(num_epochs))
 
     # -----------------------------------------------------------------------------------
     # Prediction
@@ -514,3 +518,5 @@ if __name__ == '__main__':
         print("True: {}".format(example_img_caption))
 
         plt.title("True: {}\n Predicted: {} ".format(example_img_caption, ' '.join(decoded_tokens[:-1])), loc='left')
+        f = plt.gcf()
+        f.savefig(os.path.join(results_dir, 'sample_caption_{}.eps'.format(sample_img_idx)), format='eps')
