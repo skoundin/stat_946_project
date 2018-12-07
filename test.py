@@ -16,6 +16,7 @@ from datetime import datetime
 import os
 from tqdm import tqdm
 import numpy as np
+import glob
 from sklearn.model_selection import train_test_split
 
 import tensorflow as tf
@@ -248,7 +249,7 @@ if __name__ == '__main__':
     # Get Data
     # -----------------------------------------------------------------------------------
     print("Getting Data {}".format('.' * 80))
-    train_captions, img_name_vector = get_mscoco_data(n_train=30000)
+    data_captions, data_img_names = get_mscoco_data(n_train=30000)
 
     # -----------------------------------------------------------------------------------
     # Image Feature Encoding Model
@@ -260,7 +261,6 @@ if __name__ == '__main__':
         image_model.input,
         image_model.layers[-1].output)
 
-    # TODO: Assume Features are extracted
     # -----------------------------------------------------------------------------------
     # Image Feature Extraction & Storing
     # -----------------------------------------------------------------------------------
@@ -270,16 +270,22 @@ if __name__ == '__main__':
 
     # Get unique images, there are multiple captions per image. We only need to store
     # features of unique images
-    unique_image_names = set(img_name_vector)
+    unique_image_names = set(data_img_names)
 
-    for idx, image_path in tqdm(enumerate(unique_image_names)):
-        preprocessed_img = load_image(image_path)
-        img_feat = image_features_extract_model.predict(preprocessed_img, verbose=0)
-        img_feat = np.reshape(img_feat, (img_feat.shape[0], -1, img_feat.shape[3]))
-        img_features_path = image_path + '.npy'
-        np.save(img_features_path, img_feat)
+    par_dir = os.path.dirname(data_img_names[0])
+    np_files = glob.glob(par_dir + '/*.npy')
+    if len(np_files) == len(unique_image_names):
+        print("Image features already extracted")
 
-    print("Image feature extracting step took {}".format(datetime.now() - start_feature_extract))
+    else:
+        for idx, image_path in tqdm(enumerate(unique_image_names)):
+            preprocessed_img = load_image(image_path)
+            img_feat = image_features_extract_model.predict(preprocessed_img, verbose=0)
+            img_feat = np.reshape(img_feat, (img_feat.shape[0], -1, img_feat.shape[3]))
+            img_features_path = image_path + '.npy'
+            np.save(img_features_path, img_feat)
+
+        print("Image feature extracting step took {}".format(datetime.now() - start_feature_extract))
 
     # -----------------------------------------------------------------------------------
     # Caption Preprocessing
@@ -288,7 +294,7 @@ if __name__ == '__main__':
     # 2. Limit Vocabulary to save memory, all other words replaced with token "UNK"
     # 3. Create word -> index mapping (to easily translate between them)
     # 4. Pad all captions to same (longest) length
-    print("Tokenizing Captions...")
+    print("Tokenizing Captions {}".format('.' * 80))
 
     VOCAB_LENGTH = 5000
 
@@ -297,12 +303,12 @@ if __name__ == '__main__':
         oov_token="<unk>",
         filters='!"#$%&()*+.,-/:;=?@[\]^_`{|}~ ')
 
-    tokenizer.fit_on_texts(train_captions)
+    tokenizer.fit_on_texts(data_captions)
 
     # Represent each word by its token index
     # Eg. '<start> A skateboarder performing a trick on a skateboard ramp. <end>' ==>
     # [3, 2, 351, 687, 2, 280, 5, 2, 84, 339, 4]
-    train_seqs = tokenizer.texts_to_sequences(train_captions)
+    train_seqs = tokenizer.texts_to_sequences(data_captions)
 
     # Mapping word -> index
     tokenizer.word_index = \
@@ -330,12 +336,12 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Train Validation Split
     # -----------------------------------------------------------------------------------
-    print("Creating Training and Validation Split ... ")
+    print("Creating Training/Validation data splits {}".format('.' * 80))
 
     TRAIN_VALIDATION_SPLIT = 0.2
 
     train_image_names, val_image_names, train_cap, val_cap = train_test_split(
-        img_name_vector,
+        data_img_names,
         cap_vector,
         test_size=TRAIN_VALIDATION_SPLIT,
         random_state=0)
@@ -346,8 +352,11 @@ if __name__ == '__main__':
     num_train = len(train_image_names)
     num_val = len(val_image_names)
 
+    print("Training Data: N = {}. Num unique images {}".format(num_train, len(set(train_image_names))))
+    print("Validation Data: N = {}. Num unique images {}".format(num_val, len(set(val_image_names))))
+
     # -----------------------------------------------------------------------------------
-    # Create Data set Generators
+    # Create Data  Generators
     # -----------------------------------------------------------------------------------
     print("Creating Data Generators {}".format('.' * 80))
     extracted_img_feature_dim = (64, 2048)
@@ -392,7 +401,7 @@ if __name__ == '__main__':
     # single Fully connected layer). The RNN(here GRU) attends over the image to predict
     # the next word.
     # -----------------------------------------------------------------------------------
-    print("Building Captioning Model ...")
+    print("Building Captioning Model {}".format('.' * 80))
 
     dim_embedding = 512
 
@@ -432,7 +441,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Training
     # -----------------------------------------------------------------------------------
-    print("Training Model ...")
+    print("Training {}".format('.' * 80))
 
     num_epochs = 100
     start_time = datetime.now()
@@ -497,12 +506,15 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Prediction
     # -----------------------------------------------------------------------------------
+    print("Sample predictions {}".format('.' * 80))
+
     # Sample image
     sample_img_idx_arr = [201, 10, 5, 500, 30]
+
     for sample_img_idx in sample_img_idx_arr:
-        example_img_name = img_name_vector[sample_img_idx]
+        example_img_name = data_img_names[sample_img_idx]
         # TODO: Start from images that dont have a start and end
-        example_img_caption = train_captions[sample_img_idx]
+        example_img_caption = data_captions[sample_img_idx]
 
         from PIL import Image
         temp_image = np.array(Image.open(example_img_name))
