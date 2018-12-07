@@ -12,7 +12,6 @@ import pickle
 # Import TensorFlow and enable eager execution
 # This code requires TensorFlow version >=1.9
 import tensorflow as tf
-tf.enable_eager_execution()
 
 
 # load doc into memory
