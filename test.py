@@ -556,3 +556,68 @@ if __name__ == '__main__':
         plt.title("True: {}\n Predicted: {} ".format(example_img_caption, ' '.join(decoded_tokens[:-1])), loc='left')
         f = plt.gcf()
         f.savefig(os.path.join(results_dir, 'sample_caption_{}.eps'.format(sample_img_idx)), format='eps')
+        
+    print("Calculating BLEU Scores")
+    val_image_names1 = set(val_image_names)
+    actual , predicted = list(), list()
+    for sample_img_idx in tqdm(val_image_names1):
+        
+        example_img_name = sample_img_idx
+        # TODO: Start from images that dont have a start and end
+        #example_img_caption = train_captions[sample_img_idx]
+        indices = [i for i, x in enumerate(val_image_names) if x == example_img_name]
+
+        real_caption = []
+        for j in indices:
+            real_caption.append(train_captions[j])
+
+        # Extract hidden layer features
+        x_img = load_image(example_img_name)
+        x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
+        hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
+
+        # Tokenize the caption:
+        # Expects a list of captions
+        x_img_cap = tokenizer.texts_to_sequences(real_caption)
+
+        decoded_tokens = []
+        target_seq = np.zeros((1, max_caption_len), dtype='int32')
+        target_seq[0, 0] = tokenizer.word_index['<start>']
+
+        for i in range(max_caption_len - 1):
+            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, target_seq])
+            sampled_index = np.argmax(output[0, i, :])
+            sampled_token = tokenizer.index_word[sampled_index]
+            print("{}: output word: {}".format(i, sampled_token))
+            decoded_tokens.append(sampled_token)
+
+            if sampled_token == '<end>':
+                break
+
+            target_seq[0, i + 1] = sampled_index
+
+        print('unformat',real_caption[0])
+        print('decode',decoded_tokens[0])
+        
+        ref = []
+
+        for cap in real_caption:
+          l = cap.split()
+          l.remove('<start>')
+          l.remove('<end>')
+          ref.append(l)
+          
+        actual.append(ref)
+        
+        predicted.append(decoded_tokens[:-1])
+    
+    
+    from nltk.translate.bleu_score import corpus_bleu
+    from nltk.translate.bleu_score import SmoothingFunction
+    smoothie = SmoothingFunction()
+    #print('actual',actual)
+    #print('predicted',predicted)
+    print('BLEU-1: %f' % corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0),smoothing_function=smoothie.method4))
+    print('BLEU-2: %f' % corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0),smoothing_function=smoothie.method4))
+    print('BLEU-3: %f' % corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0),smoothing_function=smoothie.method4))
+    print('BLEU-4: %f' % corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25),smoothing_function=smoothie.method4))
