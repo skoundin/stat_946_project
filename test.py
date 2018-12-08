@@ -569,7 +569,7 @@ if __name__ == '__main__':
         # Use all 5 captions to generate BLEU score with predicted caption
         real_caption = []
         for j in indices:
-            real_caption.append(train_captions[j])
+            real_caption.append(data_captions[j])
 
         # Extract hidden layer features
         x_img = load_image(img_idx)
