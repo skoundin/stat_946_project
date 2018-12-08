@@ -1,17 +1,10 @@
 import tensorflow as tf
-tf.enable_eager_execution()
 import re
 import numpy as np
 import os
 import time
 import json
-from glob import glob
-from PIL import Image
 import pickle
-
-# Import TensorFlow and enable eager execution
-# This code requires TensorFlow version >=1.9
-import tensorflow as tf
 
 
 # load doc into memory
