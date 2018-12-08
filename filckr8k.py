@@ -6,7 +6,6 @@ import time
 import json
 import pickle
 
-
 # load doc into memory
 def load_doc(filename):
   # open the file as read only
