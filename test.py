@@ -24,18 +24,23 @@ import tensorflow.keras as keras
 
 from external.attention_is_all_you_need.transformer import get_pos_encoding_matrix, Decoder
 from image_captioning_with_attention import CnnEncoder, get_mscoco_data, calc_max_length
+from flickr8k import get_flickr8k_data
+
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
+
 
 BASE_RESULTS_DIR = 'models'
 
 
-def load_image(img_path):
+def load_image(img_path, target_size=(299, 299)):
     """
     Preprocess Images for Inception V3 Model
 
+    :param target_size:
     :param img_path:
     :return:
     """
-    x = keras.preprocessing.image.load_img(img_path, target_size=(299, 299))
+    x = keras.preprocessing.image.load_img(img_path, target_size=target_size)
     x = keras.preprocessing.image.img_to_array(x)
     x = x.reshape((1, x.shape[0], x.shape[1], x.shape[2]))
     x = keras.applications.inception_v3.preprocess_input(x)  # image pixels range (-1, 1)
@@ -249,7 +254,8 @@ if __name__ == '__main__':
     # Get Data
     # -----------------------------------------------------------------------------------
     print("Getting Data {}".format('.' * 80))
-    data_captions, data_img_names = get_mscoco_data(n_train=30000)
+    # data_captions, data_img_names = get_mscoco_data(n_train=30000)
+    data_captions, data_img_names = get_flickr8k_data()
 
     # -----------------------------------------------------------------------------------
     # Image Feature Encoding Model
@@ -278,7 +284,7 @@ if __name__ == '__main__':
         print("Image features already extracted")
 
     else:
-        for idx, image_path in tqdm(enumerate(unique_image_names)):
+        for image_path in tqdm(unique_image_names, total=len(unique_image_names)):
             preprocessed_img = load_image(image_path)
             img_feat = image_features_extract_model.predict(preprocessed_img, verbose=0)
             img_feat = np.reshape(img_feat, (img_feat.shape[0], -1, img_feat.shape[3]))
@@ -339,13 +345,15 @@ if __name__ == '__main__':
     print("Creating Training/Validation data splits {}".format('.' * 80))
 
     TRAIN_VALIDATION_SPLIT = 0.2
-    #use shuffle = False here to keep train and validation images separate
+    # use shuffle = False here to keep train and validation images separate
 
     train_image_names, val_image_names, train_cap, val_cap = train_test_split(
         data_img_names,
         cap_vector,
         test_size=TRAIN_VALIDATION_SPLIT,
-        random_state=0)
+        random_state=0,
+        shuffle=False,
+    )
 
     print("Training ({} images, {} captions). Validation ({} images, {} captions)".format(
         len(train_image_names), len(train_cap), len(val_image_names), len(val_cap)))
@@ -411,8 +419,8 @@ if __name__ == '__main__':
     num_attention_heads = 8
     dim_key = 64
     dim_value = 64
-    num_decoder_layers = 6
-    prob_dropout = 0.1
+    num_decoder_layers = 2
+    prob_dropout = 0.2
 
     caption_model = CaptionTransformer(
         d_embed=dim_embedding,
@@ -428,7 +436,7 @@ if __name__ == '__main__':
     )
 
     optimizer = keras.optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-    # optimizer = keras.optimizers.Adam(0.0001, 0.9, 0.98, epsilon=1e-9)
+    # optimizer = keras.optimizers.Adam(0.00001, 0.9, 0.98, epsilon=1e-9)
     caption_model.compile(optimizer)
 
     print("Saving Model Architecture ")
@@ -444,7 +452,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     print("Training {}".format('.' * 80))
 
-    num_epochs = 100
+    num_epochs = 30
     start_time = datetime.now()
 
 
@@ -533,11 +541,11 @@ if __name__ == '__main__':
         # x_img_cap = tf.keras.preprocessing.sequence.pad_sequences(x_img_cap, maxlen=max_caption_len, padding='post')
 
         decoded_tokens = []
-        target_seq = np.zeros((1, max_caption_len), dtype='int32')
-        target_seq[0, 0] = tokenizer.word_index['<start>']
+        decoded_seq = np.zeros((1, max_caption_len), dtype='int32')
+        decoded_seq[0, 0] = tokenizer.word_index['<start>']
 
         for i in range(max_caption_len - 1):
-            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, target_seq])
+            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, decoded_seq])
             sampled_index = np.argmax(output[0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
             print("{}: output word: {}".format(i, sampled_token))
@@ -546,7 +554,7 @@ if __name__ == '__main__':
             if sampled_token == '<end>':
                 break
 
-            target_seq[0, i + 1] = sampled_index
+            decoded_seq[0, i + 1] = sampled_index
 
         print("Decoded: {}".format(' '.join(decoded_tokens[:-1])))
 
@@ -557,65 +565,80 @@ if __name__ == '__main__':
         plt.title("True: {}\n Predicted: {} ".format(example_img_caption, ' '.join(decoded_tokens[:-1])), loc='left')
         f = plt.gcf()
         f.savefig(os.path.join(results_dir, 'sample_caption_{}.eps'.format(sample_img_idx)), format='eps')
-        
-    print("Calculating BLEU Scores")
-    val_image_names1 = set(val_image_names)
-    actual , predicted = list(), list()
-    for img_idx in tqdm(val_image_names1):
-        
-        #example_img_name = sample_img_idx
-        # TODO: Start from images that dont have a start and end
-        #example_img_caption = train_captions[sample_img_idx]
-        indices = [i for i, x in enumerate(val_image_names) if x == img_idx]
-        # Use all 5 captions to generate BLEU score with predicted caption
-        real_caption = []
+
+    # -----------------------------------------------------------------------------------
+    # BLEU Score
+    # -----------------------------------------------------------------------------------
+    print("Calculating BLEU Scores {}".format('.' * 80))
+
+    val_image_names_unique = set(val_image_names)
+
+    actual = []
+    predicted = []
+
+    start_time = datetime.now()
+
+    for img_name in tqdm(val_image_names_unique, total=len(val_image_names_unique)):
+
+        # example_img_name = sample_img_idx
+        # TODO: Start from images that don't have a start and end
+        # example_img_caption = train_captions[sample_img_idx]
+
+        # Use all captions to generate BLEU score with predicted caption
+        indices = [i for i, x in enumerate(data_img_names) if x == img_name]
+
+        real_captions = []
         for j in indices:
-            real_caption.append(data_captions[j])
+            real_captions.append(data_captions[j])
 
         # Extract hidden layer features
-        x_img = load_image(img_idx)
-        x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
-        hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
+        # x_img = load_image(img_name)
+        # x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
+        # hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
+        hidden_features = np.load(img_name + '.npy')
+        #hidden_features = np.expand_dims(hidden_features, axis=0)
 
         # Tokenize the caption:
         # Expects a list of captions
-        x_img_cap = tokenizer.texts_to_sequences(real_caption)
+        x_img_cap = tokenizer.texts_to_sequences(real_captions)
 
         decoded_tokens = []
-        target_seq = np.zeros((1, max_caption_len), dtype='int32')
-        target_seq[0, 0] = tokenizer.word_index['<start>']
+        decoded_seq = np.zeros((1, max_caption_len), dtype='int32')
+
+        decoded_seq[0, 0] = tokenizer.word_index['<start>']
 
         for i in range(max_caption_len - 1):
-            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, target_seq])
+            output = caption_model.prediction_model.predict_on_batch([hidden_features, decoded_seq])
+
             sampled_index = np.argmax(output[0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
-            #print("{}: output word: {}".format(i, sampled_token))
+            # print("{}: output word: {}".format(i, sampled_token))
             decoded_tokens.append(sampled_token)
 
             if sampled_token == '<end>':
                 break
+            decoded_seq[0, i + 1] = sampled_index
 
-            target_seq[0, i + 1] = sampled_index
-
-        
         ref = []
-
-        for cap in real_caption:
-          l = cap.split()
-          l.remove('<start>')
-          l.remove('<end>')
-          ref.append(l)
+        for cap in real_captions:
+            l_temp = cap.split()
+            l_temp.remove('<start>')
+            l_temp.remove('<end>')
+            ref.append(l_temp)
           
         actual.append(ref)
         
         predicted.append(decoded_tokens[:-1])
-    
-    
-    from nltk.translate.bleu_score import corpus_bleu
-    from nltk.translate.bleu_score import SmoothingFunction
+
     smoothie = SmoothingFunction()
-    
-    print('BLEU-1: %f' % corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0),smoothing_function=smoothie.method4))
-    print('BLEU-2: %f' % corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0),smoothing_function=smoothie.method4))
-    print('BLEU-3: %f' % corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0),smoothing_function=smoothie.method4))
-    print('BLEU-4: %f' % corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25),smoothing_function=smoothie.method4))
+
+    print("BLEU-1: {}".format(
+        corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-2: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-3: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-4: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie.method4)))
+
+    print("Calculating Blue score took: {}".format(datetime.now() - start_time))
