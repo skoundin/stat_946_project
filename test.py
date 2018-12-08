@@ -560,19 +560,19 @@ if __name__ == '__main__':
     print("Calculating BLEU Scores")
     val_image_names1 = set(val_image_names)
     actual , predicted = list(), list()
-    for sample_img_idx in tqdm(val_image_names1):
+    for img_idx in tqdm(val_image_names1):
         
-        example_img_name = sample_img_idx
+        #example_img_name = sample_img_idx
         # TODO: Start from images that dont have a start and end
         #example_img_caption = train_captions[sample_img_idx]
-        indices = [i for i, x in enumerate(val_image_names) if x == example_img_name]
-
+        indices = [i for i, x in enumerate(val_image_names) if x == img_idx]
+        # Use all 5 captions to generate BLEU score with predicted caption
         real_caption = []
         for j in indices:
             real_caption.append(train_captions[j])
 
         # Extract hidden layer features
-        x_img = load_image(example_img_name)
+        x_img = load_image(img_idx)
         x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
         hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
 
@@ -615,8 +615,7 @@ if __name__ == '__main__':
     from nltk.translate.bleu_score import corpus_bleu
     from nltk.translate.bleu_score import SmoothingFunction
     smoothie = SmoothingFunction()
-    #print('actual',actual)
-    #print('predicted',predicted)
+    
     print('BLEU-1: %f' % corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0),smoothing_function=smoothie.method4))
     print('BLEU-2: %f' % corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0),smoothing_function=smoothie.method4))
     print('BLEU-3: %f' % corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0),smoothing_function=smoothie.method4))
