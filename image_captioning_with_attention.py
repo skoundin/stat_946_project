@@ -348,7 +348,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     print("Getting Data ...")
 
-    from filckr8k import get_flickr8k_data
+    from flickr8k import get_flickr8k_data
     # train_captions, img_name_vector = get_mscoco_data()
     train_captions, img_name_vector = get_flickr8k_data()
     # -----------------------------------------------------------------------------------
