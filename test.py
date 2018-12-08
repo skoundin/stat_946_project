@@ -339,6 +339,7 @@ if __name__ == '__main__':
     print("Creating Training/Validation data splits {}".format('.' * 80))
 
     TRAIN_VALIDATION_SPLIT = 0.2
+    #use shuffle = False here to keep train and validation images separate
 
     train_image_names, val_image_names, train_cap, val_cap = train_test_split(
         data_img_names,
@@ -588,7 +589,7 @@ if __name__ == '__main__':
             output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, target_seq])
             sampled_index = np.argmax(output[0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
-            print("{}: output word: {}".format(i, sampled_token))
+            #print("{}: output word: {}".format(i, sampled_token))
             decoded_tokens.append(sampled_token)
 
             if sampled_token == '<end>':
@@ -596,8 +597,6 @@ if __name__ == '__main__':
 
             target_seq[0, i + 1] = sampled_index
 
-        print('unformat',real_caption[0])
-        print('decode',decoded_tokens[0])
         
         ref = []
 
