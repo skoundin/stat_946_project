@@ -235,6 +235,23 @@ class CaptionTransformer:
         self.prediction_model.compile(opt, 'mean_squared_error')
 
 
+def decode_tokenized_caption(tokenized_cap):
+    """
+    Change Tokenized caption to words
+    :param tokenized_cap:
+    :return:
+    """
+    word_seq = []
+    for token in tokenized_cap:
+        word = tokenizer.index_word[token]
+
+        if word == '<end>':
+            break
+        word_seq.append(tokenizer.index_word[token])
+
+    print(word_seq)
+
+
 if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Initialization
@@ -416,7 +433,7 @@ if __name__ == '__main__':
 
     dim_model = 512
     dim_hidden = 512
-    num_attention_heads = 8
+    num_attention_heads = 2
     dim_key = 64
     dim_value = 64
     num_decoder_layers = 2
@@ -596,7 +613,6 @@ if __name__ == '__main__':
         # x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
         # hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
         hidden_features = np.load(img_name + '.npy')
-        #hidden_features = np.expand_dims(hidden_features, axis=0)
 
         # Tokenize the caption:
         # Expects a list of captions
