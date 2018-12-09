@@ -9,16 +9,17 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import time
 import json
 from PIL import Image
 from tqdm import tqdm
 from datetime import datetime
-
+import glob
 import tensorflow as tf
 
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
+
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 
 # ***************************************************************************************
@@ -155,6 +156,7 @@ def gru(num_units):
             recurrent_initializer='glorot_uniform')
 
 
+# noinspection PyMethodOverriding
 class BahdanauAttention(tf.keras.Model):
     def __init__(self, num_units):
         super(BahdanauAttention, self).__init__()
@@ -162,27 +164,28 @@ class BahdanauAttention(tf.keras.Model):
         self.W2 = tf.keras.layers.Dense(num_units)
         self.V = tf.keras.layers.Dense(1)
 
-    def call(self, features, hidden):
+    def call(self, features_in, hidden_in):
         # features(CNN_encoder output) shape == (batch_size, 64, embedding_dim)
 
         # hidden shape == (batch_size, hidden_size)
         # hidden_with_time_axis shape == (batch_size, 1, hidden_size)
-        hidden_with_time_axis = tf.expand_dims(hidden, 1)
+        hidden_with_time_axis = tf.expand_dims(hidden_in, 1)
 
         # score shape == (batch_size, 64, hidden_size)
-        score = tf.nn.tanh(self.W1(features) + self.W2(hidden_with_time_axis))
+        score = tf.nn.tanh(self.W1(features_in) + self.W2(hidden_with_time_axis))
 
         # attention_weights shape == (batch_size, 64, 1)
         # we get 1 at the last axis because we are applying score to self.V
         attention_weights = tf.nn.softmax(self.V(score), axis=1)
 
         # context_vector shape after sum == (batch_size, hidden_size)
-        context_vector = attention_weights * features
+        context_vector = attention_weights * features_in
         context_vector = tf.reduce_sum(context_vector, axis=1)
 
         return context_vector, attention_weights
 
 
+# noinspection PyMethodOverriding
 class CnnEncoder(tf.keras.Model):
     # Since we have already extracted the features and dumped it using pickle
     # This encoder passes those features through a Fully connected layer
@@ -197,6 +200,7 @@ class CnnEncoder(tf.keras.Model):
         return x
 
 
+# noinspection PyMethodOverriding
 class RnnDecoder(tf.keras.Model):
     def __init__(self, embed_dim, num_units, v_size):
         super(RnnDecoder, self).__init__()
@@ -209,16 +213,16 @@ class RnnDecoder(tf.keras.Model):
 
         self.attention = BahdanauAttention(self.units)
 
-    def call(self, dec_in, features, prev_hidden):
+    def call(self, dec_in, features_in, prev_hidden):
         """
         
         :param dec_in: Full word (not embedded). Either Start or previous output of decoder 
-        :param features: Encoded Image Features
+        :param features_in: Encoded Image Features
         :param prev_hidden: previous hidden state of the Decoder
         :return: 
         """
         # defining attention as a separate model
-        context_vector, attention_weights = self.attention(features, prev_hidden)
+        context_vector, attention_weights = self.attention(features_in, prev_hidden)
 
         # x shape after passing through embedding == (batch_size, 1, embedding_dim)
         dec_in = self.embedding(dec_in)
@@ -269,14 +273,14 @@ def evaluate(x):
     result1 = []
 
     for ii in range(max_length):
-        #print("Iteration {} of {}".format(ii, max_length))
+        # print("Iteration {} of {}".format(ii, max_length))
         predictions1, hidden1, attention_weights = decoder(dec_input1, features1, hidden1)
 
         attention_plt[ii] = tf.reshape(attention_weights, (-1, )).numpy()
 
         predicted_id = tf.argmax(predictions1[0]).numpy()
         if predicted_id == 1:
-          predicted_id = 0
+            predicted_id = 0
         result1.append(index_word[predicted_id])
 
         if index_word[predicted_id] == '<end>':
@@ -294,47 +298,17 @@ def plot_attention(x, result1, attention_plt):
     fig = plt.figure(figsize=(10, 10))
 
     len_result = len(result1)
-    for l in range(len_result):
-        temp_att = np.resize(attention_plt[l], (8, 8))
-        ax = fig.add_subplot(len_result // 2, len_result // 2, l + 1)
-        ax.set_title(result1[l])
+    for lx in range(len_result):
+        temp_att = np.resize(attention_plt[lx], (8, 8))
+        ax = fig.add_subplot(len_result // 2, len_result // 2, lx + 1)
+        ax.set_title(result1[lx])
         img1 = ax.imshow(temp_image)
         ax.imshow(temp_att, cmap='gray', alpha=0.6, extent=img1.get_extent())
 
     plt.tight_layout()
     plt.show()
 
-def eval_flickr(img_name_val,cap_val,index_word):
-  print("Calculating BLEU")  
-  from nltk.translate.bleu_score import corpus_bleu
-  from nltk.translate.bleu_score import SmoothingFunction
-  smoothie = SmoothingFunction()
-  y=0
-  actual,predicted = list(),list()
-  for img in img_name_val:
-    if(y>1000):
-      break
-    y = y+1
-    indices = [i for i, x in enumerate(img_name_val) if x == img]
-    real_caption = []
-    for j in indices:
-      #caps.append(train_captions[j])
-      real_caption.append(' '.join([index_word[i] for i in cap_val[j] if i not in [0,1]]))
-    ref = []
-    for d in real_caption:
-      l = d.split()
-      #l.remove('<start>')
-      ref.append(l)
-    actual.append(ref)
-    result, attention_plot = evaluate(img)
-    result = ['<start>'] + result
-    if(result[-1]!='<end>'):
-      result = result + ['<end>']
-    predicted.append(result)
-  print('BLEU-1: %f' % corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0),smoothing_function=smoothie.method4))
-  print('BLEU-2: %f' % corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0),smoothing_function=smoothie.method4))
-  print('BLEU-3: %f' % corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0),smoothing_function=smoothie.method4))
-  print('BLEU-4: %f' % corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25),smoothing_function=smoothie.method4))
+
 if __name__ == '__main__':
 
     # -----------------------------------------------------------------------------------
@@ -376,14 +350,21 @@ if __name__ == '__main__':
     image_dataset = tf.data.Dataset.from_tensor_slices(encode_train).map(load_image).batch(IMAGE_CACHING_BATCH_SIZE)
 
     start_feature_extract = datetime.now()
-    for img, path in tqdm(image_dataset):
+    unique_image_names = set(img_name_vector)
+    par_dir = os.path.dirname(img_name_vector[0])
+    np_files = glob.glob(par_dir + '/*.npy')
 
-        batch_features = image_features_extract_model(img)
-        batch_features = tf.reshape(batch_features, (batch_features.shape[0], -1, batch_features.shape[3]))
+    if len(np_files) == len(unique_image_names):
+        print("Image features already extracted")
+    else:
+        for img, path in tqdm(image_dataset, total=len(encode_train)):
 
-        for bf, p in zip(batch_features, path):
-            path_of_feature = p.numpy().decode("utf-8")
-            np.save(path_of_feature, bf.numpy())
+            batch_features = image_features_extract_model(img)
+            batch_features = tf.reshape(batch_features, (batch_features.shape[0], -1, batch_features.shape[3]))
+
+            for bf, p in zip(batch_features, path):
+                path_of_feature = p.numpy().decode("utf-8")
+                np.save(path_of_feature, bf.numpy())
 
     print("Image Feature Extracting Step took {}".format(datetime.now() - start_feature_extract))
 
@@ -446,7 +427,8 @@ if __name__ == '__main__':
         img_name_vector,
         cap_vector,
         test_size=TRAIN_VALIDATION_SPLIT,
-        random_state=0)
+        random_state=0,
+        shuffle=False)
 
     print("Training ({} images, {} captions). Validation ({} images, {} captions)".format(
         len(img_name_train), len(cap_train), len(img_name_val), len(cap_val)))
@@ -519,7 +501,7 @@ if __name__ == '__main__':
     for epoch in range(EPOCHS):
         start = datetime.now()
         total_loss = 0
-
+        count = 0
         for (batch, (img_tensor, true_caption)) in enumerate(dataset):
             loss = 0
             if true_caption.shape[0] % 64 == 0:
@@ -540,7 +522,7 @@ if __name__ == '__main__':
 
                         # using teacher forcing
                         dec_input = tf.expand_dims(true_caption[:, i], 1)
-
+                count = count + 1
                 total_loss += (loss / int(true_caption.shape[1]))
 
                 variables = encoder.variables + decoder.variables
@@ -556,11 +538,12 @@ if __name__ == '__main__':
                         loss.numpy() / int(true_caption.shape[1])))
 
         # storing the epoch end loss value to plot later
-        loss_plot.append(total_loss / len(cap_vector))
+        loss_plot.append(total_loss / count)
 
-        print('Epoch {} Loss {:.6f}'.format(
+        print('Epoch {} of {} Loss {:.6f}'.format(
             epoch + 1,
-            total_loss / len(cap_vector)))
+            EPOCHS,
+            total_loss / count))
 
         print('Time taken for 1 epoch {} sec\n'.format(datetime.now() - start))
 
@@ -569,6 +552,7 @@ if __name__ == '__main__':
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.title('Loss Plot')
+    # plt.show()
 
     # -----------------------------------------------------------------------------------
     # Evaluate
@@ -598,17 +582,49 @@ if __name__ == '__main__':
      raining data (so be prepared for weird results!)
     """
 
-    image_url = 'https://tensorflow.org/images/surf.jpg'
-    image_extension = image_url[-4:]
-    image_path = tf.keras.utils.get_file('image'+image_extension, origin=image_url)
+    # image_url = 'https://tensorflow.org/images/surf.jpg'
+    # image_extension = image_url[-4:]
+    # image_path = tf.keras.utils.get_file('image'+image_extension, origin=image_url)
+    #
+    # result, attention_plot = evaluate(image_path)
+    # print('Prediction Caption:', ' '.join(result))
+    # plot_attention(image_path, result, attention_plot)
+    
+    # -------------------------------------------------------
+    #                  Get BLEU Scores
+    # -------------------------------------------------------
+    print("Calculating BLEU ... ")
+    start_time = datetime.now()
 
-    result, attention_plot = evaluate(image_path)
-    print('Prediction Caption:', ' '.join(result))
-    plot_attention(image_path, result, attention_plot)
-    
-    #Get BLEU Scores
-    eval_flickr(img_name_val,cap_val,index_word)
-    
-    # opening the image
-    Image.open(image_path)
-    
+    smoothie = SmoothingFunction()
+    actual, predicted = list(), list()
+    unique_val_img = set(img_name_val)
+
+    for img in tqdm(unique_val_img, total=(len(unique_val_img))):
+
+        indices = [i for i, x in enumerate(img_name_val) if x == img]
+        real_caption = []
+        for j in indices:
+            real_caption.append(' '.join([index_word[i] for i in cap_val[j] if i not in [0, 1]]))
+        ref = []
+        for d in real_caption:
+            l_temp = d.split()
+            l_temp.remove('<start>')
+            l_temp.remove('<end>')
+            ref.append(l_temp)
+        actual.append(ref)
+        result, attention_plot = evaluate(img)
+        if result[-1] == '<end>':
+            result.remove('<end>')
+        predicted.append(result)
+
+    print("BLEU-1: {}".format(
+        corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-2: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-3: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-4: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie.method4)))
+
+    print("Calculating Blue score took: {}".format(datetime.now() - start_time))
