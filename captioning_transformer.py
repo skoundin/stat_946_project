@@ -1,27 +1,50 @@
+# -*- coding: utf-8 -*-
+# !/usr/bin/python3
 # ---------------------------------------------------------------------------------------
-# Image Captioning using the Transformer network
+# Image Captioning using the Transformer Network
+#
+# References:
+# [1] https://github.com/Lsdefine/attention-is-all-you-need-keras
+#     Transformer for machine translation.
+#
+# [2] https://github.com/tensorflow/tensorflow/blob/master/tensorflow/contrib/eager/
+#     python/examples/generative_examples/image_captioning_with_attention.ipynb
+#    Image captioning using an RNN (GRU)
 # ---------------------------------------------------------------------------------------
 import matplotlib.pyplot as plt
 from datetime import datetime
 import os
 from tqdm import tqdm
 import numpy as np
-from tensorflow.keras.utils import plot_model
+import glob
+from sklearn.model_selection import train_test_split
 
-from tensorflow.keras.layers import Embedding, TimeDistributed, Dense, Input, Lambda
-import keras.backend as K
 import tensorflow as tf
-from tensorflow.keras.models import Model
-
-from tensorflow.keras.optimizers import *
-from tensorflow.keras.callbacks import *
+import tensorflow.keras as keras
 
 from external.attention_is_all_you_need.transformer import get_pos_encoding_matrix, Decoder
+from image_captioning_with_attention import CnnEncoder, get_mscoco_data, calc_max_length
+from flickr8k import get_flickr8k_data
 
-from image_captioning_with_attention import CnnEncoder, get_mscoco_data, calc_max_length, \
-    train_test_split, load_image
+from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
 BASE_RESULTS_DIR = 'models'
+
+
+def load_image(img_path, target_size=(299, 299)):
+    """
+    Preprocess Images for Inception V3 Model
+
+    :param target_size:
+    :param img_path:
+    :return:
+    """
+    x = keras.preprocessing.image.load_img(img_path, target_size=target_size)
+    x = keras.preprocessing.image.img_to_array(x)
+    x = x.reshape((1, x.shape[0], x.shape[1], x.shape[2]))
+    x = keras.applications.inception_v3.preprocess_input(x)  # image pixels range (-1, 1)
+
+    return x
 
 
 # noinspection PyAttributeOutsideInit
@@ -69,16 +92,15 @@ class DataGenerator(tf.keras.utils.Sequence):
         :return:
         """
         x_arr = np.zeros((self.batch_size, self.feature_size[0], self.feature_size[1]), dtype='float32')
-        y_arr = np.zeros((self.batch_size, self.max_caption_len),  dtype='int32')
+        y_arr = np.zeros((self.batch_size, self.max_caption_len), dtype='int32')
 
         # print("Loading a new batch")
 
         for img_idx, list_id in enumerate(list_ids_temp):
-
             temp = np.load(list_id + '.npy')
 
-            x_arr[img_idx, ] = temp
-            y_arr[img_idx, ] = self.data_key_dict[list_id]
+            x_arr[img_idx,] = temp
+            y_arr[img_idx,] = self.data_key_dict[list_id]
 
         return [x_arr, y_arr], None
 
@@ -107,11 +129,10 @@ class CaptionTransformer:
     def __init__(
             self, d_embed, d_model, d_hidden, n_attn_heads, d_k, d_v, n_decoder_layers,
             p_dropout, max_capt_len, v_size):
-
         self.encoder = CnnEncoder(d_embed)
 
         # Position encoding layer, this is used to preserve the order of words in caption sequences.
-        self.pos_embed_layer = Embedding(
+        self.pos_embed_layer = keras.layers.Embedding(
             max_capt_len,
             d_embed,
             trainable=False,
@@ -120,7 +141,7 @@ class CaptionTransformer:
         )
 
         # Word Embedding Layer
-        self.word_embed_layer = Embedding(v_size, d_embed, name='word_embed')
+        self.word_embed_layer = keras.layers.Embedding(v_size, d_embed, name='word_embed')
 
         self.decoder = Decoder(
             d_model=d_model,
@@ -133,27 +154,27 @@ class CaptionTransformer:
             word_emb=self.word_embed_layer,
             pos_emb=self.pos_embed_layer)
 
-        self.map_to_word_tokens_layer = TimeDistributed(Dense(v_size, use_bias=False))
+        self.map_to_word_tokens_layer = \
+            keras.layers.TimeDistributed(keras.layers.Dense(v_size, use_bias=False))
 
     @staticmethod
     def get_pos_seq(x):
-        mask = K.cast(K.not_equal(x, 0), 'int32')
-        pos = tf.cumsum(K.ones_like(x, 'int32'), 1)
+        mask = keras.backend.cast(keras.backend.not_equal(x, 0), 'int32')
+        pos = tf.cumsum(keras.backend.ones_like(x, 'int32'), 1)
         return pos * mask
 
     def compile(self, opt, active_layers=999):
-
         # This is for Teacher Forcing
-        img_features = Input(shape=(64, 2048,), dtype='float32', name='image_features')
-        tgt_seq_input = Input(shape=(None,), dtype='int32', name='true_caption')
+        img_features = keras.layers.Input(shape=(64, 2048,), dtype='float32', name='image_features')
+        tgt_seq_input = keras.layers.Input(shape=(None,), dtype='int32', name='true_caption')
 
         # Teacher Forcing caption
-        tf_cap_seq = Lambda(lambda x1: x1[:, :-1], name='tf_cap_seq')(tgt_seq_input)
-        true_cap_seq = Lambda(lambda x1: x1[:, 1:], name='true_cap_seq')(tgt_seq_input)
+        tf_cap_seq = keras.layers.Lambda(lambda x1: x1[:, :-1], name='tf_cap_seq')(tgt_seq_input)
+        true_cap_seq = keras.layers.Lambda(lambda x1: x1[:, 1:], name='true_cap_seq')(tgt_seq_input)
 
         # tf_cap_seq = [43, 10, 20, 45, 0, 0, 0, 0]  # tokenized words (sequence)
         # tgt_pos = [ 1,  2,  3,  4, 0, 0, 0, 0]
-        tgt_pos = Lambda(self.get_pos_seq, name='map_tf_seq_to_pos_vector')(tf_cap_seq)
+        tgt_pos = keras.layers.Lambda(self.get_pos_seq, name='map_tf_seq_to_pos_vector')(tf_cap_seq)
 
         enc_output = self.encoder(img_features)
         dec_output = self.decoder(tf_cap_seq, tgt_pos, None, enc_output, active_layers=active_layers)
@@ -165,22 +186,27 @@ class CaptionTransformer:
             loss1 = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y_true, logits=y_pred)
             mask = tf.cast(tf.not_equal(y_true, 0), 'float32')
             loss1 = tf.reduce_sum(loss1 * mask, -1) / tf.reduce_sum(mask, -1)
-            loss1 = K.mean(loss1)
+            loss1 = keras.backend.mean(loss1)
             return loss1
 
         def get_accuracy(args):
             y_pred, y_true = args
             mask = tf.cast(tf.not_equal(y_true, 0), 'float32')
-            corr = K.cast(K.equal(K.cast(y_true, 'int32'), K.cast(K.argmax(y_pred, axis=-1), 'int32')), 'float32')
-            corr = K.sum(corr * mask, -1) / K.sum(mask, -1)
-            return K.mean(corr)
+            corr = keras.backend.cast(
+                keras.backend.equal(
+                    keras.backend.cast(y_true, 'int32'),
+                    keras.backend.cast(keras.backend.argmax(y_pred, axis=-1), 'int32')), 'float32')
 
-        loss = Lambda(get_loss, name='get_loss')([final_output, true_cap_seq])
+            corr = keras.backend.sum(corr * mask, -1) / keras.backend.sum(mask, -1)
 
-        self.ppl = Lambda(K.exp, name='exponential_loss')(loss)
-        self.accu = Lambda(get_accuracy, name='get_accuracy')([final_output, true_cap_seq])
+            return keras.backend.mean(corr)
 
-        self.training_model = Model([img_features, tgt_seq_input], loss)
+        loss = keras.layers.Lambda(get_loss, name='get_loss')([final_output, true_cap_seq])
+
+        self.ppl = keras.layers.Lambda(keras.backend.exp, name='exponential_loss')(loss)
+        self.accu = keras.layers.Lambda(get_accuracy, name='get_accuracy')([final_output, true_cap_seq])
+
+        self.training_model = keras.models.Model([img_features, tgt_seq_input], loss)
         self.training_model.add_loss([loss])
 
         self.training_model.compile(opt, None)
@@ -191,18 +217,35 @@ class CaptionTransformer:
 
         # This Model does not do Teacher Forcing and should be used on test/validation data
         # ---------------------------------------------------------------------------------
-        img_features_1 = Input(shape=(64, 2048,), dtype='float32', name='image_features_1')
-        tgt_seq_input_1 = Input(shape=(None,), dtype='int32', name='decoder_output')
+        img_features_1 = keras.layers.Input(shape=(64, 2048,), dtype='float32', name='image_features_1')
+        tgt_seq_input_1 = keras.layers.Input(shape=(None,), dtype='int32', name='decoder_output')
         tgt_seq_1 = tgt_seq_input_1
 
-        tgt_pos = Lambda(self.get_pos_seq)(tgt_seq_1)
+        tgt_pos = keras.layers.Lambda(self.get_pos_seq)(tgt_seq_1)
 
         enc_output_1 = self.encoder(img_features_1)
-        dec_output_1 = self.decoder(tgt_seq_1, tgt_pos, None, enc_output_1,  active_layers=active_layers)
+        dec_output_1 = self.decoder(tgt_seq_1, tgt_pos, None, enc_output_1, active_layers=active_layers)
         final_output_1 = self.map_to_word_tokens_layer(dec_output_1)
 
-        self.prediction_model = Model([img_features_1, tgt_seq_input_1], final_output_1)
+        self.prediction_model = keras.models.Model([img_features_1, tgt_seq_input_1], final_output_1)
         self.prediction_model.compile(opt, 'mean_squared_error')
+
+
+def decode_tokenized_caption(tokenized_cap):
+    """
+    Change Tokenized caption to words
+    :param tokenized_cap:
+    :return:
+    """
+    word_seq = []
+    for token in tokenized_cap:
+        word = tokenizer.index_word[token]
+
+        if word == '<end>':
+            break
+        word_seq.append(tokenizer.index_word[token])
+
+    print(word_seq)
 
 
 if __name__ == '__main__':
@@ -210,7 +253,7 @@ if __name__ == '__main__':
     # Initialization
     # -----------------------------------------------------------------------------------
     plt.ion()
-    results_identifier = 'captioning_transformer_mscoco_60000_6_layers'
+    results_identifier = 'captioning_transformer'
 
     # Immutable
     if not os.path.exists(BASE_RESULTS_DIR):
@@ -224,38 +267,44 @@ if __name__ == '__main__':
     # Get Data
     # -----------------------------------------------------------------------------------
     print("Getting Data {}".format('.' * 80))
-    train_captions, img_name_vector = get_mscoco_data(n_train=60000)
+    # data_captions, data_img_names = get_mscoco_data(n_train=30000)
+    data_captions, data_img_names = get_flickr8k_data()
 
+    # -----------------------------------------------------------------------------------
+    # Image Feature Encoding Model
+    # -----------------------------------------------------------------------------------
     # Don't include the top, we only need the features from the last layer, not the classifier
-    image_model = tf.keras.applications.InceptionV3(include_top=False, weights='imagenet')
-    new_input = image_model.input
-    hidden_layer = image_model.layers[-1].output
+    image_model = keras.applications.InceptionV3(include_top=False, weights='imagenet')
 
-    image_features_extract_model = tf.keras.Model(new_input, hidden_layer)
+    image_features_extract_model = tf.keras.Model(
+        image_model.input,
+        image_model.layers[-1].output)
 
-    # TODO: Assume Features are extracted
-    # # Store Features of Images and use these for training
-    # # --------------------------------------------
-    # print("Extracting Features from dataset images ...")
-    #
-    # # Get unique images, there are multiple captions per image. We only need to store
-    # # features of unique images
-    # IMAGE_CACHING_BATCH_SIZE = 16
-    #
-    # encode_train = sorted(set(img_name_vector))
-    # image_dataset = tf.data.Dataset.from_tensor_slices(encode_train).map(load_image).batch(IMAGE_CACHING_BATCH_SIZE)
-    #
-    # start_feature_extract = datetime.now()
-    # for img, path in tqdm(image_dataset):
-    #
-    #     batch_features = image_features_extract_model(img)
-    #     batch_features = tf.reshape(batch_features, (batch_features.shape[0], -1, batch_features.shape[3]))
-    #
-    #     for bf, p in zip(batch_features, path):
-    #         path_of_feature = p.numpy().decode("utf-8")
-    #         np.save(path_of_feature, bf.numpy())
-    #
-    # print("Image Feature Extracting Step took {}".format(datetime.now() - start_feature_extract))
+    # -----------------------------------------------------------------------------------
+    # Image Feature Extraction & Storing
+    # -----------------------------------------------------------------------------------
+    print("Extracting image features and storing {}".format('.' * 80))
+
+    start_feature_extract = datetime.now()
+
+    # Get unique images, there are multiple captions per image. We only need to store
+    # features of unique images
+    unique_image_names = set(data_img_names)
+
+    par_dir = os.path.dirname(data_img_names[0])
+    np_files = glob.glob(par_dir + '/*.npy')
+    if len(np_files) == len(unique_image_names):
+        print("Image features already extracted")
+
+    else:
+        for image_path in tqdm(unique_image_names, total=len(unique_image_names)):
+            preprocessed_img = load_image(image_path)
+            img_feat = image_features_extract_model.predict(preprocessed_img, verbose=0)
+            img_feat = np.reshape(img_feat, (img_feat.shape[0], -1, img_feat.shape[3]))
+            img_features_path = image_path + '.npy'
+            np.save(img_features_path, img_feat)
+
+        print("Image feature extracting step took {}".format(datetime.now() - start_feature_extract))
 
     # -----------------------------------------------------------------------------------
     # Caption Preprocessing
@@ -264,7 +313,7 @@ if __name__ == '__main__':
     # 2. Limit Vocabulary to save memory, all other words replaced with token "UNK"
     # 3. Create word -> index mapping (to easily translate between them)
     # 4. Pad all captions to same (longest) length
-    print("Tokenizing Captions...")
+    print("Tokenizing Captions {}".format('.' * 80))
 
     VOCAB_LENGTH = 5000
 
@@ -273,12 +322,12 @@ if __name__ == '__main__':
         oov_token="<unk>",
         filters='!"#$%&()*+.,-/:;=?@[\]^_`{|}~ ')
 
-    tokenizer.fit_on_texts(train_captions)
+    tokenizer.fit_on_texts(data_captions)
 
     # Represent each word by its token index
     # Eg. '<start> A skateboarder performing a trick on a skateboard ramp. <end>' ==>
     # [3, 2, 351, 687, 2, 280, 5, 2, 84, 339, 4]
-    train_seqs = tokenizer.texts_to_sequences(train_captions)
+    train_seqs = tokenizer.texts_to_sequences(data_captions)
 
     # Mapping word -> index
     tokenizer.word_index = \
@@ -306,15 +355,18 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Train Validation Split
     # -----------------------------------------------------------------------------------
-    print("Creating Training and Validation Split ... ")
+    print("Creating Training/Validation data splits {}".format('.' * 80))
 
     TRAIN_VALIDATION_SPLIT = 0.2
+    # use shuffle = False here to keep train and validation images separate
 
     train_image_names, val_image_names, train_cap, val_cap = train_test_split(
-        img_name_vector,
+        data_img_names,
         cap_vector,
         test_size=TRAIN_VALIDATION_SPLIT,
-        random_state=0)
+        random_state=0,
+        shuffle=False,
+    )
 
     print("Training ({} images, {} captions). Validation ({} images, {} captions)".format(
         len(train_image_names), len(train_cap), len(val_image_names), len(val_cap)))
@@ -322,10 +374,13 @@ if __name__ == '__main__':
     num_train = len(train_image_names)
     num_val = len(val_image_names)
 
+    print("Training Data: N = {}. Num unique images {}".format(num_train, len(set(train_image_names))))
+    print("Validation Data: N = {}. Num unique images {}".format(num_val, len(set(val_image_names))))
+
     # -----------------------------------------------------------------------------------
-    # Create Data set Generators
+    # Create Data  Generators
     # -----------------------------------------------------------------------------------
-    print("Creating a Training and validation Datasets ...")
+    print("Creating Data Generators {}".format('.' * 80))
     extracted_img_feature_dim = (64, 2048)
     batch_size = 64
 
@@ -368,17 +423,17 @@ if __name__ == '__main__':
     # single Fully connected layer). The RNN(here GRU) attends over the image to predict
     # the next word.
     # -----------------------------------------------------------------------------------
-    print("Building Captioning Model ...")
+    print("Building Captioning Model {}".format('.' * 80))
 
     dim_embedding = 512
 
     dim_model = 512
     dim_hidden = 512
-    num_attention_heads = 8
+    num_attention_heads = 2
     dim_key = 64
     dim_value = 64
-    num_decoder_layers = 6
-    prob_dropout = 0.1
+    num_decoder_layers = 2
+    prob_dropout = 0.2
 
     caption_model = CaptionTransformer(
         d_embed=dim_embedding,
@@ -393,12 +448,12 @@ if __name__ == '__main__':
         v_size=VOCAB_LENGTH,
     )
 
-    optimizer = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
-    # optimizer = Adam(0.0001, 0.9, 0.98, epsilon=1e-9)
+    optimizer = keras.optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+    # optimizer = keras.optimizers.Adam(0.00001, 0.9, 0.98, epsilon=1e-9)
     caption_model.compile(optimizer)
 
-    print("Saving Model Architecture")
-    plot_model(
+    print("Saving Model Architecture ")
+    keras.utils.plot_model(
         caption_model.training_model,
         to_file=os.path.join(results_dir, 'model.png'),
         show_shapes=True)
@@ -408,9 +463,9 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Training
     # -----------------------------------------------------------------------------------
-    print("Training Model ...")
+    print("Training {}".format('.' * 80))
 
-    num_epochs = 100
+    num_epochs = 30
     start_time = datetime.now()
 
 
@@ -422,13 +477,14 @@ if __name__ == '__main__':
 
         return curr_learning_rate
 
-    learning_rate_modifying_cb = LearningRateScheduler(
+
+    learning_rate_modifying_cb = keras.callbacks.LearningRateScheduler(
         learning_rate_modifier,
         verbose=1
     )
 
     model_save_file = os.path.join(results_dir, 'weights.h5')
-    model_saver = ModelCheckpoint(model_save_file, save_best_only=True, save_weights_only=True)
+    model_saver = keras.callbacks.ModelCheckpoint(model_save_file, save_best_only=True, save_weights_only=True)
 
     history = caption_model.training_model.fit_generator(
         generator=train_data_generator,
@@ -473,21 +529,25 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     # Prediction
     # -----------------------------------------------------------------------------------
+    print("Sample predictions {}".format('.' * 80))
+
     # Sample image
     sample_img_idx_arr = [201, 10, 5, 500, 30]
+
     for sample_img_idx in sample_img_idx_arr:
-        example_img_name = img_name_vector[sample_img_idx]
+        example_img_name = data_img_names[sample_img_idx]
         # TODO: Start from images that dont have a start and end
-        example_img_caption = train_captions[sample_img_idx]
+        example_img_caption = data_captions[sample_img_idx]
 
         from PIL import Image
+
         temp_image = np.array(Image.open(example_img_name))
         plt.figure()
         plt.imshow(temp_image)
 
         # Extract hidden layer features
         x_img = load_image(example_img_name)
-        x_img_features = image_features_extract_model(K.expand_dims(x_img[0], axis=0))
+        x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
         hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
 
         # Tokenize the caption:
@@ -496,11 +556,11 @@ if __name__ == '__main__':
         # x_img_cap = tf.keras.preprocessing.sequence.pad_sequences(x_img_cap, maxlen=max_caption_len, padding='post')
 
         decoded_tokens = []
-        target_seq = np.zeros((1, max_caption_len), dtype='int32')
-        target_seq[0, 0] = tokenizer.word_index['<start>']
+        decoded_seq = np.zeros((1, max_caption_len), dtype='int32')
+        decoded_seq[0, 0] = tokenizer.word_index['<start>']
 
         for i in range(max_caption_len - 1):
-            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, target_seq])
+            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, decoded_seq])
             sampled_index = np.argmax(output[0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
             print("{}: output word: {}".format(i, sampled_token))
@@ -509,7 +569,7 @@ if __name__ == '__main__':
             if sampled_token == '<end>':
                 break
 
-            target_seq[0, i + 1] = sampled_index
+            decoded_seq[0, i + 1] = sampled_index
 
         print("Decoded: {}".format(' '.join(decoded_tokens[:-1])))
 
@@ -520,3 +580,79 @@ if __name__ == '__main__':
         plt.title("True: {}\n Predicted: {} ".format(example_img_caption, ' '.join(decoded_tokens[:-1])), loc='left')
         f = plt.gcf()
         f.savefig(os.path.join(results_dir, 'sample_caption_{}.eps'.format(sample_img_idx)), format='eps')
+
+    # -----------------------------------------------------------------------------------
+    # BLEU Score
+    # -----------------------------------------------------------------------------------
+    print("Calculating BLEU Scores {}".format('.' * 80))
+
+    val_image_names_unique = set(val_image_names)
+
+    actual = []
+    predicted = []
+
+    start_time = datetime.now()
+
+    for img_name in tqdm(val_image_names_unique, total=len(val_image_names_unique)):
+
+        # example_img_name = sample_img_idx
+        # TODO: Start from images that don't have a start and end
+        # example_img_caption = train_captions[sample_img_idx]
+
+        # Use all captions to generate BLEU score with predicted caption
+        indices = [i for i, x in enumerate(data_img_names) if x == img_name]
+
+        real_captions = []
+        for j in indices:
+            real_captions.append(data_captions[j])
+
+        # Extract hidden layer features
+        # x_img = load_image(img_name)
+        # x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
+        # hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
+        hidden_features = np.load(img_name + '.npy')
+
+        # Tokenize the caption:
+        # Expects a list of captions
+        x_img_cap = tokenizer.texts_to_sequences(real_captions)
+
+        decoded_tokens = []
+        decoded_seq = np.zeros((1, max_caption_len), dtype='int32')
+
+        decoded_seq[0, 0] = tokenizer.word_index['<start>']
+
+        for i in range(max_caption_len - 1):
+            output = caption_model.prediction_model.predict_on_batch([hidden_features, decoded_seq])
+
+            sampled_index = np.argmax(output[0, i, :])
+            sampled_token = tokenizer.index_word[sampled_index]
+            # print("{}: output word: {}".format(i, sampled_token))
+            decoded_tokens.append(sampled_token)
+
+            if sampled_token == '<end>':
+                break
+            decoded_seq[0, i + 1] = sampled_index
+
+        ref = []
+        for cap in real_captions:
+            l_temp = cap.split()
+            l_temp.remove('<start>')
+            l_temp.remove('<end>')
+            ref.append(l_temp)
+
+        actual.append(ref)
+
+        predicted.append(decoded_tokens[:-1])
+
+    smoothie = SmoothingFunction()
+
+    print("BLEU-1: {}".format(
+        corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-2: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-3: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0), smoothing_function=smoothie.method4)))
+    print("BLEU-4: {}".format(
+        corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie.method4)))
+
+    print("Calculating Blue score took: {}".format(datetime.now() - start_time))
