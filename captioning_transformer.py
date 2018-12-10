@@ -603,6 +603,7 @@ if __name__ == '__main__':
         # x_img_features = image_features_extract_model(keras.backend.expand_dims(x_img[0], axis=0))
         # hidden_feature_input = tf.reshape(x_img_features, (x_img_features.shape[0], -1, x_img_features.shape[3]))
         hidden_features = np.load(img_name + '.npy')
+        hidden_features_input = keras.backend.expand_dims(hidden_features, axis=0)
 
         # Tokenize the caption:
         # Expects a list of captions
@@ -614,7 +615,7 @@ if __name__ == '__main__':
         decoded_seq[0, 0] = tokenizer.word_index['<start>']
 
         for i in range(max_caption_len - 1):
-            output = caption_model.prediction_model.predict_on_batch([hidden_features, decoded_seq])
+            output = caption_model.prediction_model.predict_on_batch([hidden_feature_input, decoded_seq])
 
             sampled_index = np.argmax(output[0, i, :])
             sampled_token = tokenizer.index_word[sampled_index]
