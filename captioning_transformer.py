@@ -18,6 +18,7 @@ from tqdm import tqdm
 import numpy as np
 import glob
 from sklearn.model_selection import train_test_split
+import pickle
 
 import tensorflow as tf
 import tensorflow.keras as keras
@@ -99,8 +100,8 @@ class DataGenerator(tf.keras.utils.Sequence):
         for img_idx, list_id in enumerate(list_ids_temp):
             temp = np.load(list_id + '.npy')
 
-            x_arr[img_idx,] = temp
-            y_arr[img_idx,] = self.data_key_dict[list_id]
+            x_arr[img_idx, ] = temp
+            y_arr[img_idx, ] = self.data_key_dict[list_id]
 
         return [x_arr, y_arr], None
 
@@ -465,7 +466,7 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     print("Training {}".format('.' * 80))
 
-    num_epochs = 30
+    num_epochs = 10
     start_time = datetime.now()
 
 
@@ -513,18 +514,9 @@ if __name__ == '__main__':
 
     f.savefig(os.path.join(results_dir, 'training.eps'), format='eps')
 
-    summary_file = os.path.join(results_dir, 'summary.text')
-    with open(summary_file, 'w') as handle:
-        handle.write("Final Train Loss: {}\n".format(history.history['loss'][-1]))
-        handle.write("Final Validation Loss: {}\n".format(history.history['val_loss'][-1]))
-        handle.write("Final Train Accuracy: {}\n".format(history.history['accu'][-1]))
-        handle.write("Final Validation Accuracy: {}\n".format(history.history['val_accu'][-1]))
-        handle.write("\n")
-        handle.write("Number of parameters {}\n".format(caption_model.training_model.count_params()))
-        handle.write("Number of attention heads {}\n".format(num_attention_heads))
-        handle.write("Number of Decoder Layers heads {}\n".format(num_decoder_layers))
-        handle.write("\n")
-        handle.write("Number of Epochs {}\n".format(num_epochs))
+    train_history_file = os.path.join(results_dir, 'training_history.pkl')
+    with open(train_history_file, 'wb') as handle:
+        pickle.dump(history.history, handle)
 
     # -----------------------------------------------------------------------------------
     # Prediction
@@ -646,13 +638,33 @@ if __name__ == '__main__':
 
     smoothie = SmoothingFunction()
 
-    print("BLEU-1: {}".format(
-        corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0), smoothing_function=smoothie.method4)))
-    print("BLEU-2: {}".format(
-        corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothie.method4)))
-    print("BLEU-3: {}".format(
-        corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0), smoothing_function=smoothie.method4)))
-    print("BLEU-4: {}".format(
-        corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie.method4)))
+    bleu1 = corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0), smoothing_function=smoothie.method4)
+    bleu2 = corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothie.method4)
+    bleu3 = corpus_bleu(actual, predicted, weights=(0.33, 0.33, 0.33, 0), smoothing_function=smoothie.method4)
+    bleu4 = corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie.method4)
 
-    print("Calculating Blue score took: {}".format(datetime.now() - start_time))
+    print("BLEU-1: {}".format(bleu1))
+    print("BLEU-2: {}".format(bleu2))
+    print("BLEU-3: {}".format(bleu3))
+    print("BLEU-4: {}".format(bleu4))
+
+    print("Calculating BLEU scores took: {}".format(datetime.now() - start_time))
+
+    # store BLEU scores in summary.txt
+    summary_file = os.path.join(results_dir, 'summary.text')
+    with open(summary_file, 'w') as handle:
+        handle.write("Final Train Loss: {}\n".format(history.history['loss'][-1]))
+        handle.write("Final Validation Loss: {}\n".format(history.history['val_loss'][-1]))
+        handle.write("Final Train Accuracy: {}\n".format(history.history['accu'][-1]))
+        handle.write("Final Validation Accuracy: {}\n".format(history.history['val_accu'][-1]))
+        handle.write("\n")
+        handle.write("Number of parameters {}\n".format(caption_model.training_model.count_params()))
+        handle.write("Number of attention heads {}\n".format(num_attention_heads))
+        handle.write("Number of Decoder Layers heads {}\n".format(num_decoder_layers))
+        handle.write("\n")
+        handle.write("Number of Epochs {}\n".format(num_epochs))
+        handle.write("\n")
+        handle.write("BLEU-1 {}\n".format(bleu1))
+        handle.write("BLEU-2 {}\n".format(bleu2))
+        handle.write("BLEU-3 {}\n".format(bleu3))
+        handle.write("BLEU-4 {}\n".format(bleu4))
