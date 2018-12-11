@@ -332,9 +332,10 @@ if __name__ == '__main__':
     # -----------------------------------------------------------------------------------
     print("Getting Data ...")
 
-    from flickr8k import get_flickr8k_data
+    from flickr8k import get_flickr8k_data, get_flickr30k_data
     # train_captions, img_name_vector = get_mscoco_data()
-    train_captions, img_name_vector = get_flickr8k_data()
+    #train_captions, img_name_vector = get_flickr8k_data()
+    train_captions, img_name_vector = get_flickr30k_data()    
     # -----------------------------------------------------------------------------------
     # Image Encoder
     # InceptionV3 model (pretrained on Imagenet). Feature Shape [2048, 64]

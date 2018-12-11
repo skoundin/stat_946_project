@@ -100,3 +100,33 @@ def get_flickr8k_data():
     print('Captions loaded:', len(train_captions) )
     print('Images:', len(img_name_vector) )
     return train_captions,img_name_vector
+
+
+def get_flickr30k_data():
+
+  print("Entered")
+  #name_of_zip = 'Flickr8k_Dataset.zip'
+
+  data_dir = os.path.join(os.path.abspath('.'), 'data/flickr30k')
+
+  PATH = data_dir+'/Flickr30k_Dataset/'
+
+  data_dir = os.path.join(os.path.abspath('.'), 'data/flickr30k')
+  print("data dir is",data_dir)
+  
+  all_captions1 = []
+  all_img_name_vector1 = []
+  filename = 'data/flickr30k/Flickr30k.token.txt'
+
+  # load descriptions
+  doc = load_doc(filename)
+  # parse descriptions
+  all_captions1,all_img_name_vector1 = load_descriptions(doc)
+
+  train_caption=[]
+  img_name_vector=[]
+  train_captions = all_captions1
+  img_name_vector = all_img_name_vector1
+  print('Captions loaded:', len(train_captions) )
+  print('Images:', len(img_name_vector) )
+  return train_captions,img_name_vector
