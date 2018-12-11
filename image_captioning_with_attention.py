@@ -21,7 +21,7 @@ from sklearn.utils import shuffle
 
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 
-
+BASE_RESULTS_DIR = 'results'
 # ***************************************************************************************
 #  Get the Data
 # ***************************************************************************************
@@ -317,6 +317,15 @@ if __name__ == '__main__':
     plt.ion()
     tf.enable_eager_execution()
 
+    results_identifier = 'gru_image_captioning'
+    if not os.path.exists(BASE_RESULTS_DIR):
+        os.mkdir(BASE_RESULTS_DIR)
+
+    results_dir = os.path.join(BASE_RESULTS_DIR, results_identifier)
+    if not os.path.exists(results_dir):
+        os.mkdir(results_dir)
+
+    
     # -----------------------------------------------------------------------------------
     # Get Data
     # -----------------------------------------------------------------------------------
@@ -463,6 +472,20 @@ if __name__ == '__main__':
     dataset = dataset.batch(BATCH_SIZE)
     dataset = dataset.prefetch(1)
 
+    dataset_val = tf.data.Dataset.from_tensor_slices((img_name_val, cap_val))
+
+    # using map to load the numpy files in parallel
+    # NOTE: Be sure to set num_parallel_calls to the number of CPU cores you have
+    # https://www.tensorflow.org/api_docs/python/tf/py_func
+    dataset_val = dataset_val.map(lambda item1, item2: tf.py_func(
+          map_func, [item1, item2], [tf.float32, tf.int32]), num_parallel_calls=8)
+
+    # shuffling and batching
+    dataset_val = dataset_val.shuffle(BUFFER_SIZE)
+    # https://www.tensorflow.org/api_docs/python/tf/contrib/data/batch_and_drop_remainder
+    dataset_val = dataset_val.batch(BATCH_SIZE)
+    dataset_val = dataset_val.prefetch(1)
+
     # -----------------------------------------------------------------------------------
     # CAPTIONING MODEL
     #
@@ -494,14 +517,18 @@ if __name__ == '__main__':
 
     # adding this in a separate cell because if you run the training cell
     # many times, the loss_plot array will be reset
-    loss_plot = []
+     loss_plot = []
+    
+    loss_plot_val = []
 
     EPOCHS = 20
     
     for epoch in range(EPOCHS):
         start = datetime.now()
         total_loss = 0
+        total_loss_val = 0
         count = 0
+        count_val = 0
         for (batch, (img_tensor, true_caption)) in enumerate(dataset):
             loss = 0
             if true_caption.shape[0] % 64 == 0:
@@ -539,20 +566,75 @@ if __name__ == '__main__':
 
         # storing the epoch end loss value to plot later
         loss_plot.append(total_loss / count)
-
+        total_loss = total_loss / count
         print('Epoch {} of {} Loss {:.6f}'.format(
             epoch + 1,
             EPOCHS,
-            total_loss / count))
+            total_loss ))
 
-        print('Time taken for 1 epoch {} sec\n'.format(datetime.now() - start))
+
+        print('Getting Validation loss')
+        for (batch, (img_tensor, true_caption)) in enumerate(dataset_val):
+            loss_val = 0
+            if true_caption.shape[0] % 64 == 0:
+                # initializing the hidden state for each batch
+                # because the captions are not related from image to image
+                hidden = decoder.reset_state(batch_size=true_caption.shape[0])
+
+                dec_input = tf.expand_dims([tokenizer.word_index['<start>']] * BATCH_SIZE, 1)
+
+                with tf.GradientTape() as tape:
+                    features = encoder(img_tensor)
+
+                    for i in range(1, true_caption.shape[1]):
+                        # passing the features through the decoder
+                        predictions, hidden, _ = decoder(dec_input, features, hidden)
+
+                        loss_val += loss_function(true_caption[:, i], predictions)
+
+                        # using teacher forcing
+                        # dec_input = tf.expand_dims(true_caption[:, i], 1)
+                count_val = count_val + 1
+                total_loss_val += (loss_val / int(true_caption.shape[1]))
+
+                #variables = encoder.variables + decoder.variables
+
+                #gradients = tape.gradient(loss, variables)
+
+                #optimizer.apply_gradients(zip(gradients, variables), tf.train.get_or_create_global_step())
+
+                if batch % 100 == 0:
+                    print('Epoch {} Batch {} validation Loss {:.4f}'.format(
+                        epoch + 1,
+                        batch,
+                        loss_val.numpy() / int(true_caption.shape[1])))
+
+        print('Validation loss for epoch {} is {}'.format(epoch,
+            total_loss_val/count_val))
+        print('Time taken for epoch {} sec\n'.format(datetime.now() - start))
+        
+        total_loss_val = total_loss_val / count_val
+        loss_plot_val.append(total_loss_val)
+        
 
     # PLot loss function
-    plt.plot(loss_plot)
+    plt.plot(loss_plot_val)
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.title('Loss Plot')
-    # plt.show()
+    
+    plt.savefig(os.path.join(results_dir, 'training.eps'), format='eps')
+    
+    val_loss_arr = []
+    for val_arr_i in  range(len(loss_plot_val)):
+      l1 = loss_plot_val[0].numpy()
+      val_loss_arr.append(l1)
+
+    val_loss_file = os.path.join(results_dir, 'val_loss.pkl')  
+    with open(val_loss_file, 'wb') as handle:
+          pickle.dump(val_loss_arr, handle)
+        
+       
 
     # -----------------------------------------------------------------------------------
     # Evaluate
@@ -562,33 +644,48 @@ if __name__ == '__main__':
     # Stop predicting when the model predicts the end token.
     #  And store the attention weights for every time step.
     # -----------------------------------------------------------------------------------
-    print("Starting Evaluation ...")
-    # captions on the validation set
-    rid = np.random.randint(0, len(img_name_val))
-    image = img_name_val[rid]
-    real_caption = ' '.join([index_word[i] for i in cap_val[rid] if i not in [0]])
-    result, attention_plot = evaluate(image)
+    # print("Starting Evaluation ...")
+    # # captions on the validation set
+    # for x in xrange(5):
+    #     rid = np.random.randint(0, len(img_name_val))
+    #     image = img_name_val[rid]
+    #     real_caption = ' '.join([index_word[i] for i in cap_val[rid] if i not in [0]])
+    #     result, attention_plot = evaluate(image)
 
-    print('Real Caption:', real_caption)
-    print('Prediction Caption:', ' '.join(result))
-    plot_attention(image, result, attention_plot)
+    #     print('Real Caption:', real_caption)
+    #     print('Prediction Caption:', ' '.join(result))
+    #     plot_attention(image, result, attention_plot)
 
-    # opening the image
-    Image.open(img_name_val[rid])
+    #     # opening the image
+    #     # Image.open(img_name_val[rid])
 
-    """## Try it on your own images
-    For fun, below we've provided a method you can use to caption your own images with the model we've just trained. 
-     Keep in mind, it was trained on a relatively small amount of data, and your images may be different from the t
-     raining data (so be prepared for weird results!)
-    """
+    #     plt.title("True: {}\n Predicted: {} ".format(real_caption, ' '.join(result)), loc='left')
+    #     f = plt.gcf()
+    #     f.savefig(os.path.join(results_dir, 'sample_caption_{}.eps'.format(sample_img_idx)), format='eps')
 
-    # image_url = 'https://tensorflow.org/images/surf.jpg'
-    # image_extension = image_url[-4:]
-    # image_path = tf.keras.utils.get_file('image'+image_extension, origin=image_url)
-    #
-    # result, attention_plot = evaluate(image_path)
-    # print('Prediction Caption:', ' '.join(result))
-    # plot_attention(image_path, result, attention_plot)
+    # -------------------------------------------------------
+    #                  Sample Captions
+    # -------------------------------------------------------
+    for x in range(5):
+        rid = np.random.randint(0, len(img_name_val))
+        image = img_name_val[rid]
+        real_caption = ' '.join([index_word[i] for i in cap_val[rid] if i not in [0,1]])
+        result, attention_plot = evaluate(image)
+
+        print('Real Caption:', real_caption)
+        print('Prediction Caption:', ' '.join(result))
+        #plot_attention(image, result, attention_plot)
+        from PIL import Image
+
+        temp_image = np.array(Image.open(image))
+        plt.figure()
+        plt.imshow(temp_image)
+        # opening the image
+        # Image.open(img_name_val[rid])
+
+        plt.title("True: {}\n Predicted: {} ".format(real_caption, ' '.join(result)), loc='left')
+        f = plt.gcf()
+        f.savefig(os.path.join(results_dir, 'sample_caption_{}.eps'.format(x)), format='eps')
     
     # -------------------------------------------------------
     #                  Get BLEU Scores
@@ -617,14 +714,49 @@ if __name__ == '__main__':
         if result[-1] == '<end>':
             result.remove('<end>')
         predicted.append(result)
-
-    print("BLEU-1: {}".format(
-        corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0), smoothing_function=smoothie.method4)))
-    print("BLEU-2: {}".format(
-        corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothie.method4)))
-    print("BLEU-3: {}".format(
-        corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0), smoothing_function=smoothie.method4)))
-    print("BLEU-4: {}".format(
-        corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie.method4)))
+    
+    bleu1 = corpus_bleu(actual, predicted, weights=(1.0, 0, 0, 0), smoothing_function=smoothie.method4)
+    bleu2 = corpus_bleu(actual, predicted, weights=(0.5, 0.5, 0, 0), smoothing_function=smoothie.method4)
+    bleu3 = corpus_bleu(actual, predicted, weights=(0.3, 0.3, 0.3, 0), smoothing_function=smoothie.method4)
+    bleu4 = corpus_bleu(actual, predicted, weights=(0.25, 0.25, 0.25, 0.25), smoothing_function=smoothie.method4)
+    print("BLEU-1: {}".format(bleu1))
+    print("BLEU-2: {}".format(bleu2))
+    print("BLEU-3: {}".format(bleu3))
+    print("BLEU-4: {}".format(bleu4))
 
     print("Calculating Blue score took: {}".format(datetime.now() - start_time))
+    
+    print('encoder variables')
+    count_enc = 0
+    for i in range(len(encoder.variables)):
+      # print(encoder.variables[i].shape)
+      param_v = 1
+      for x in range(len(encoder.variables[i].shape)):
+        param_v = param_v * encoder.variables[i].shape[x]
+      count_enc = count_enc + param_v
+    print(count_enc)
+
+    print('decoder variables')
+    count_dec = 0
+    for i in range(len(decoder.variables)):
+      param_v = 1
+      # print(decoder.variables[i].shape)
+      for x in range(len(decoder.variables[i].shape)):
+        param_v = param_v * decoder.variables[i].shape[x]
+      count_dec = count_dec + param_v
+    print(count_dec)  
+    print('total variables',count_enc + count_dec)
+    
+    summary_file = os.path.join(results_dir, 'summary.text')
+    with open(summary_file, 'w') as handle:
+        handle.write("Final Train Loss: {}\n".format(total_loss))
+        handle.write("Final Validation Loss: {}\n".format(total_loss_val))
+        handle.write("\n")
+        handle.write("Number of parameters {}\n".format(count_enc + count_dec))
+        handle.write("\n")
+        handle.write("Number of Epochs {}\n".format(EPOCHS))
+        handle.write("\n")
+        handle.write("BLEU-1 {}\n".format(bleu1))
+        handle.write("BLEU-2 {}\n".format(bleu2))
+        handle.write("BLEU-3 {}\n".format(bleu3))
+        handle.write("BLEU-4 {}\n".format(bleu4))
