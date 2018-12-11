@@ -15,6 +15,7 @@ from tqdm import tqdm
 from datetime import datetime
 import glob
 import tensorflow as tf
+import pickle
 
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
