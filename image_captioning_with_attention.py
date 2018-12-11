@@ -325,7 +325,7 @@ if __name__ == '__main__':
     if not os.path.exists(results_dir):
         os.mkdir(results_dir)
 
-    
+
     # -----------------------------------------------------------------------------------
     # Get Data
     # -----------------------------------------------------------------------------------
@@ -517,7 +517,7 @@ if __name__ == '__main__':
 
     # adding this in a separate cell because if you run the training cell
     # many times, the loss_plot array will be reset
-     loss_plot = []
+    loss_plot = []
     
     loss_plot_val = []
 
